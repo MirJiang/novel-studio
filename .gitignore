@@ -1,0 +1,10 @@
+# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+
+# ffmpeg/ffprobe 体积大（~145MB），不入库；获取方式见 README
+src-tauri/binaries/
+
+# 临时文件
+*.tsbuildinfo

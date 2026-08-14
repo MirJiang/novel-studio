@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/* ===== 设计令牌：V3 雾白毛玻璃 ===== */
+@theme {
+  --color-canvas: #f2f3f6; /* 冷调浅灰底 */
+  --color-surface: #ffffff;
+  --color-surface2: #f9f9fb;
+  --color-hover: rgba(255, 255, 255, 0.6); /* 悬停：雾白 */
+  --color-line: rgba(60, 60, 90, 0.08); /* 极浅分隔（尽量少用） */
+  --color-ink: #1c1c1e;
+  --color-body: #3a3a3e;
+  --color-muted: #8e8e93;
+  --color-faint: #aeaeb2;
+
+  /* 系统蓝 */
+  --color-accent: #007aff;
+  --color-accent-h: #1a88ff;
+  --color-accent-soft: rgba(0, 122, 255, 0.1);
+
+  /* 粉彩（封面色块兜底、标签） */
+  --color-pblue: #e1f3fe;
+  --color-pblue-t: #1f6c9f;
+  --color-pgreen: #edf3ec;
+  --color-pgreen-t: #346538;
+  --color-pyellow: #fbf3db;
+  --color-pyellow-t: #956400;
+  --color-pred: #fdebec;
+  --color-pred-t: #9f2f2d;
+
+  /* 衬线标题 */
+  --font-display: Georgia, "Songti SC", "STSong", "SimSun", serif;
+
+  /* 柔和投影（带偏移 + 柔化） */
+  --shadow-card: 0 2px 10px rgba(60, 60, 90, 0.08);
+  --shadow-lift: 0 16px 36px rgba(60, 60, 90, 0.16);
+  --shadow-float: 0 12px 32px rgba(30, 30, 40, 0.18);
+  --shadow-glow: 0 4px 14px rgba(0, 122, 255, 0.32);
+}
+
+body {
+  font-family:
+    "SF Pro Display", "Segoe UI", "Microsoft YaHei", "PingFang SC",
+    "Noto Sans CJK SC", system-ui, sans-serif;
+  color: var(--color-body);
+}
+
+/* 选中文本：系统蓝淡色 */
+::selection {
+  background: rgba(0, 122, 255, 0.16);
+}
+
+/* 键盘焦点可见性 */
+:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 1px;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(60, 60, 90, 0.18);
+  border: 3px solid transparent;
+  border-radius: 99px;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(60, 60, 90, 0.3);
+  background-clip: content-box;
+  border: 3px solid transparent;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* TipTap 写作区：衬线字体更接近阅读体验 */
+.tiptap {
+  outline: none;
+  min-height: 60vh;
+  font-size: 17px;
+  line-height: 2;
+  font-family: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC",
+    "STSong", "SimSun", serif;
+  color: #2c2c2e;
+}
+
+.tiptap p {
+  margin: 0.6em 0;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  content: "开始写作，或点击上方「AI 续写」…";
+  color: #aeaeb2;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

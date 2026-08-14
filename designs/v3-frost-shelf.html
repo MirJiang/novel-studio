@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>V3 雾白 · 书架 — Novel Studio</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei",sans-serif;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#C9D6E8 0%,#D8D2E4 45%,#E8DDD2 100%);
+  }
+  .serif{font-family:"Songti SC","STSong","SimSun",serif}
+
+  .win{
+    width:1280px;height:820px;border-radius:14px;overflow:hidden;
+    display:flex;flex-direction:column;position:relative;
+    background:rgba(250,250,252,.72);backdrop-filter:blur(40px);
+    box-shadow:0 32px 80px rgba(60,60,90,.28),0 4px 16px rgba(60,60,90,.14);
+    outline:1px solid rgba(255,255,255,.5);
+  }
+  .caption{
+    height:46px;flex-shrink:0;display:flex;align-items:center;
+    padding-left:16px;user-select:none;
+  }
+  .caption .app{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;color:#3A3A3E}
+  .caption .app .logo{
+    width:19px;height:19px;border-radius:6px;
+    background:linear-gradient(135deg,#5B8DEF,#7B61C9);
+    color:#fff;display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:700;box-shadow:0 2px 6px rgba(91,141,239,.4);
+  }
+  .win-controls{margin-left:auto;display:flex;height:100%}
+  .wbtn{
+    width:46px;height:100%;border:none;background:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;color:#6B6B70;
+  }
+  .wbtn:hover{background:rgba(60,60,90,.08);color:#1C1C1E}
+  .wbtn.close:hover{background:#E81123;color:#fff}
+  .wbtn svg{width:12px;height:12px}
+
+  .body{flex:1;overflow-y:auto;padding:36px 48px}
+  .shelf-head{display:flex;align-items:center;gap:14px}
+  .shelf-head h1{font-size:26px;font-weight:700;color:#1C1C1E;letter-spacing:-0.01em}
+  .shelf-head .cnt{font-size:12.5px;color:#8E8E93}
+  .new-book{
+    margin-left:auto;display:flex;align-items:center;gap:7px;border:none;cursor:pointer;
+    background:#007AFF;color:#fff;border-radius:99px;
+    font-family:inherit;font-size:12.5px;font-weight:600;padding:9px 18px;
+    box-shadow:0 4px 14px rgba(0,122,255,.35);
+    transition:transform .15s,box-shadow .2s;
+  }
+  .new-book:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,122,255,.4)}
+  .new-book svg{width:12px;height:12px}
+
+  .grid{
+    margin-top:30px;display:grid;gap:26px;
+    grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+  }
+  .book{
+    cursor:pointer;background:rgba(255,255,255,.65);border:none;text-align:left;
+    font-family:inherit;border-radius:16px;padding:12px;
+    box-shadow:0 2px 10px rgba(60,60,90,.08);
+    transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s;
+  }
+  .book:hover{transform:translateY(-3px);box-shadow:0 16px 36px rgba(60,60,90,.16)}
+  .cover{
+    aspect-ratio:3/4;border-radius:10px;position:relative;overflow:hidden;
+    box-shadow:0 2px 8px rgba(60,60,90,.12);
+  }
+  .cover .ct{position:absolute;inset:0;padding:16px 14px;display:flex;flex-direction:column}
+  .cover .ttl{
+    font-family:"Songti SC","SimSun",serif;font-size:19px;font-weight:700;
+    color:rgba(255,255,255,.96);letter-spacing:.08em;line-height:1.4;
+  }
+  .cover .gen{
+    margin-top:auto;font-size:10px;color:rgba(255,255,255,.75);letter-spacing:.16em;
+    background:rgba(255,255,255,.18);backdrop-filter:blur(8px);
+    align-self:flex-start;padding:4px 10px;border-radius:99px;
+  }
+  .c1{background:linear-gradient(155deg,#E8857A,#C2504A)}
+  .c2{background:linear-gradient(155deg,#6E9BD8,#3D5F9E)}
+  .c3{background:linear-gradient(155deg,#7FAE8A,#46705A)}
+  .c4{background:linear-gradient(155deg,#9B8AC4,#5F4E8C)}
+  .meta{margin-top:10px;padding:0 4px 2px}
+  .meta .nm{font-size:13.5px;font-weight:600;color:#1C1C1E}
+  .meta .st{font-size:11px;color:#8E8E93;margin-top:2px}
+
+  .add{
+    aspect-ratio:3/4;border-radius:10px;cursor:pointer;margin:12px;margin-top:12px;
+    background:rgba(255,255,255,.4);color:#8E8E93;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+    font-size:12px;border:1.5px dashed rgba(60,60,90,.2);font-family:inherit;
+    transition:background .2s;align-self:flex-start;width:calc(100% - 24px);
+  }
+  .add:hover{background:rgba(255,255,255,.7);color:#3A3A3E}
+  .add svg{width:16px;height:16px}
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="caption">
+    <div class="app"><div class="logo">N</div>Novel Studio</div>
+    <div class="win-controls">
+      <button class="wbtn"><svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button class="wbtn"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button class="wbtn close"><svg viewBox="0 0 12 12"><path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="shelf-head">
+      <h1>书架</h1>
+      <span class="cnt">4 部作品</span>
+      <button class="new-book"><svg viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.8"/></svg>新建作品</button>
+    </div>
+
+    <div class="grid">
+      <button class="book">
+        <div class="cover c1"><div class="ct"><div class="ttl serif">烬上花开</div><div class="gen">仙侠 · 卷一</div></div></div>
+        <div class="meta"><div class="nm">烬上花开</div><div class="st">12 章 · 4.2 万字 · 2 小时前</div></div>
+      </button>
+      <button class="book">
+        <div class="cover c2"><div class="ct"><div class="ttl serif">北纬三十七</div><div class="gen">都市 · 连载</div></div></div>
+        <div class="meta"><div class="nm">北纬三十七</div><div class="st">3 章 · 8,600 字 · 昨天</div></div>
+      </button>
+      <button class="book">
+        <div class="cover c3"><div class="ct"><div class="ttl serif">长风帖</div><div class="gen">武侠 · 存稿</div></div></div>
+        <div class="meta"><div class="nm">长风帖</div><div class="st">27 章 · 11.4 万字 · 3 天前</div></div>
+      </button>
+      <button class="book">
+        <div class="cover c4"><div class="ct"><div class="ttl serif">夜班出租车司机</div><div class="gen">悬疑 · 卷二</div></div></div>
+        <div class="meta"><div class="nm">夜班出租车司机</div><div class="st">8 章 · 3.1 万字 · 上周</div></div>
+      </button>
+      <button class="add">
+        <svg viewBox="0 0 16 16"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.4"/></svg>
+        新建作品
+      </button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

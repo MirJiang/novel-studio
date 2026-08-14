@@ -1,0 +1,168 @@
+interface AppRailProps {
+  /** 是否在书架页 */
+  onShelf: boolean;
+  /** 是否已打开作品（决定书籍相关项是否可用） */
+  hasProject: boolean;
+  /** 当前主视图（写作=章节/设定，封面，体检，视频） */
+  activeView: "write" | "cover" | "check" | "video" | null;
+  /** 设置页是否打开 */
+  settingsActive?: boolean;
+  onGoShelf: () => void;
+  onGoWrite: () => void;
+  onGoCover: () => void;
+  onGoCheck: () => void;
+  onGoVideo: () => void;
+  onExport: () => void;
+  onOpenSettings: () => void;
+}
+
+/**
+ * 应用级导航栏：贯穿书架与写作态。
+ * 新功能（视频/发布…）在这里加一项即可，顶部不再堆按钮。
+ */
+export function AppRail(props: AppRailProps) {
+  const book = props.hasProject;
+  return (
+    <nav className="flex h-full w-[60px] shrink-0 flex-col items-center gap-1 self-stretch pt-2 pb-3">
+      <RailItem
+        label="书架"
+        active={props.onShelf}
+        onClick={props.onGoShelf}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+            <path d="M5 4v16M10 4v16M15 4v16" />
+            <path d="M3 4h18M3 20h18" />
+          </svg>
+        }
+      />
+      <RailItem
+        label="写作"
+        disabled={!book}
+        active={!props.onShelf && props.activeView === "write"}
+        onClick={props.onGoWrite}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
+        }
+      />
+      <RailItem
+        label="封面"
+        disabled={!book}
+        active={!props.onShelf && props.activeView === "cover"}
+        onClick={props.onGoCover}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" />
+          </svg>
+        }
+      />
+      <RailItem
+        label="体检"
+        disabled={!book}
+        active={!props.onShelf && props.activeView === "check"}
+        onClick={props.onGoCheck}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12h4l3 8 4-16 3 8h4" />
+          </svg>
+        }
+      />
+
+      <div className="my-1 h-px w-7 bg-black/8" />
+
+      <RailItem
+        label="视频"
+        disabled={!book}
+        active={!props.onShelf && props.activeView === "video"}
+        onClick={props.onGoVideo}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="3" />
+            <path d="M10 9l5 3-5 3V9z" />
+          </svg>
+        }
+      />
+
+      {/* 规划中：v0.5 */}
+      <RailItem
+        label="发布"
+        disabled
+        soon
+        onClick={() => {}}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 2 11 13" />
+            <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+          </svg>
+        }
+      />
+
+      {/* 底部：动作 + 设置 */}
+      <div className="mt-auto flex flex-col items-center gap-1">
+        <RailItem
+          label="导出"
+          disabled={!book}
+          onClick={props.onExport}
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <path d="M7 10l5 5 5-5M12 15V3" />
+            </svg>
+          }
+        />
+        <RailItem
+          label="设置"
+          active={props.settingsActive}
+          onClick={props.onOpenSettings}
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+              <path d="M1 14h6M9 8h6M17 16h6" />
+            </svg>
+          }
+        />
+      </div>
+    </nav>
+  );
+}
+
+function RailItem({
+  label,
+  icon,
+  active,
+  disabled,
+  soon,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  active?: boolean;
+  disabled?: boolean;
+  /** 规划中标记 */
+  soon?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      title={soon ? `${label}（规划中）` : label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`relative flex w-12 flex-col items-center gap-1 rounded-xl py-2 transition-colors ${
+        active
+          ? "bg-surface text-accent shadow-card"
+          : disabled
+            ? "text-faint/70"
+            : "text-muted hover:bg-hover hover:text-body"
+      }`}
+    >
+      <span className="h-5 w-5">{icon}</span>
+      <span className="text-[10px] leading-none">{label}</span>
+      {soon && (
+        <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-faint" />
+      )}
+    </button>
+  );
+}

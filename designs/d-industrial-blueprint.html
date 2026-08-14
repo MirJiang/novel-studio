@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 D · 工业蓝图 — Novel Studio</title>
+<style>
+  :root{
+    --paper:#F4F4F0;
+    --ink:#111111;
+    --red:#E61919;
+    --gray:#8A887F;
+    --line:#111111;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;border-radius:0!important}
+  html,body{height:100%}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei",sans-serif;
+    background:var(--paper);color:var(--ink);
+    display:flex;overflow:hidden;font-size:14px;
+  }
+  .mono{font-family:"IBM Plex Mono","Consolas",monospace}
+  .heavy{font-family:"Arial Black","Microsoft YaHei",sans-serif;font-weight:900}
+
+  /* ---------- 侧栏 ---------- */
+  .sidebar{
+    width:272px;flex-shrink:0;height:100vh;
+    border-right:1px solid var(--line);
+    display:flex;flex-direction:column;background:var(--paper);
+  }
+  .brand{
+    background:var(--ink);color:var(--paper);padding:16px 18px;
+    display:flex;align-items:flex-end;justify-content:space-between;
+  }
+  .brand-name{
+    font-family:"Arial Black","Microsoft YaHei",sans-serif;font-weight:900;
+    font-size:19px;letter-spacing:-0.02em;text-transform:uppercase;line-height:1;
+  }
+  .brand-name span{color:var(--red)}
+  .brand-rev{font-family:"Consolas",monospace;font-size:9px;letter-spacing:.1em;opacity:.6}
+
+  .side-scroll{flex:1;overflow-y:auto}
+  .sec-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 18px;border-bottom:1px solid var(--line);
+    font-family:"Consolas",monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+  }
+  .sec-head .cross{color:var(--red);font-size:13px}
+
+  .proj{
+    display:grid;grid-template-columns:44px 1fr auto;gap:0;align-items:center;
+    border-bottom:1px solid var(--line);cursor:pointer;
+  }
+  .proj .idx{
+    font-family:"Arial Black",sans-serif;font-weight:900;font-size:20px;
+    padding:12px 0 12px 18px;letter-spacing:-0.04em;
+  }
+  .proj .nm{font-size:13.5px;font-weight:700;padding-left:10px}
+  .proj .mt{font-family:"Consolas",monospace;font-size:9.5px;color:var(--gray);padding-left:10px;letter-spacing:.06em}
+  .proj .st{
+    font-family:"Consolas",monospace;font-size:9px;padding:2px 6px;margin-right:14px;
+    border:1px solid var(--line);letter-spacing:.1em;
+  }
+  .proj.active .st{background:var(--red);border-color:var(--red);color:#fff}
+  .proj.active{background:rgba(230,25,25,.04)}
+  .proj:hover{background:rgba(17,17,17,.04)}
+
+  .tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line)}
+  .tab{
+    font-family:"Consolas",monospace;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;
+    padding:9px 0;text-align:center;cursor:pointer;color:var(--gray);
+  }
+  .tab.active{color:var(--paper);background:var(--ink)}
+
+  .chapter{
+    display:grid;grid-template-columns:52px 1fr auto;align-items:center;
+    border-bottom:1px solid #C9C7BC;cursor:pointer;
+  }
+  .chapter:hover{background:rgba(17,17,17,.05)}
+  .chapter .no{
+    font-family:"Consolas",monospace;font-size:10px;padding:11px 0 11px 14px;color:var(--gray);white-space:nowrap;
+  }
+  .chapter .t{font-size:13.5px;font-weight:600;padding-left:10px}
+  .chapter .w{font-family:"Consolas",monospace;font-size:9.5px;color:var(--gray);padding-right:14px}
+  .chapter.active{background:var(--ink);color:var(--paper)}
+  .chapter.active .no,.chapter.active .w{color:rgba(244,244,240,.55)}
+  .chapter.active .no::after{content:"◀";color:var(--red);font-size:8px;margin-left:5px}
+
+  .side-foot{
+    border-top:2px solid var(--ink);padding:9px 18px;
+    font-family:"Consolas",monospace;font-size:9.5px;letter-spacing:.12em;
+    display:flex;justify-content:space-between;text-transform:uppercase;
+  }
+
+  /* ---------- 主区 ---------- */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+  .topbar{
+    display:flex;align-items:stretch;border-bottom:2px solid var(--ink);
+    background:var(--paper);height:54px;flex-shrink:0;
+  }
+  .crumb{
+    display:flex;align-items:center;padding:0 20px;gap:12px;flex:1;
+  }
+  .crumb .file{font-family:"Consolas",monospace;font-size:10px;letter-spacing:.14em;color:var(--gray);text-transform:uppercase}
+  .crumb .name{font-weight:800;font-size:14px;letter-spacing:-0.01em}
+  .top-actions{display:flex}
+  .tbtn{
+    font-family:"Consolas",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+    background:none;border:none;border-left:1px solid var(--line);padding:0 18px;cursor:pointer;
+    color:var(--ink);
+  }
+  .tbtn:hover{background:rgba(17,17,17,.06)}
+  .tbtn.primary{background:var(--red);color:#fff;font-weight:700}
+  .tbtn.primary:hover{background:#C41414}
+
+  /* 警示条纹 */
+  .hazard{
+    height:6px;flex-shrink:0;
+    background:repeating-linear-gradient(-45deg,var(--ink) 0 8px,var(--paper) 8px 16px);
+    border-bottom:1px solid var(--line);
+  }
+
+  .editor-wrap{flex:1;overflow-y:auto;padding:40px 56px 120px;position:relative}
+  .grid-lines{
+    position:absolute;inset:0;pointer-events:none;
+    background:
+      linear-gradient(90deg,rgba(17,17,17,.035) 1px,transparent 1px) 0 0/80px 80px,
+      linear-gradient(0deg,rgba(17,17,17,.035) 1px,transparent 1px) 0 0/80px 80px;
+  }
+  .doc{max-width:720px;position:relative}
+
+  .doc-top{
+    display:grid;grid-template-columns:auto 1fr;gap:32px;align-items:end;
+    border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:26px;
+  }
+  .ch-no{
+    font-family:"Arial Black",sans-serif;font-weight:900;
+    font-size:120px;line-height:.8;letter-spacing:-0.06em;color:var(--ink);
+  }
+  .ch-no sup{font-size:22px;color:var(--red);letter-spacing:0}
+  .doc-eyebrow{
+    font-family:"Consolas",monospace;font-size:10px;letter-spacing:.24em;text-transform:uppercase;
+    color:var(--gray);margin-bottom:10px;
+  }
+  .doc-title{
+    font-family:"Arial Black","Microsoft YaHei",sans-serif;font-weight:900;
+    font-size:44px;letter-spacing:-0.02em;line-height:1;text-transform:uppercase;
+  }
+  .doc-meta{
+    margin-top:12px;display:flex;gap:0;border:1px solid var(--line);width:max-content;
+  }
+  .doc-meta span{
+    font-family:"Consolas",monospace;font-size:9.5px;letter-spacing:.1em;
+    padding:5px 12px;border-right:1px solid var(--line);text-transform:uppercase;
+  }
+  .doc-meta span:last-child{border-right:none;color:var(--red)}
+
+  .prose{font-size:16px;line-height:1.95;color:#1C1C1A;max-width:640px}
+  .prose p{margin-bottom:1.2em}
+  .prose .sel{background:var(--ink);color:var(--paper);padding:1px 2px}
+
+  /* AI 区块 */
+  .ai-block{margin-top:48px;border:2px solid var(--ink);max-width:640px;background:var(--paper)}
+  .ai-head{
+    display:flex;align-items:center;border-bottom:1px solid var(--line);
+    background:var(--ink);color:var(--paper);
+  }
+  .ai-title{
+    font-family:"Consolas",monospace;font-size:10.5px;letter-spacing:.22em;
+    text-transform:uppercase;padding:10px 16px;
+  }
+  .ai-title b{color:var(--red)}
+  .ai-status{
+    margin-left:auto;font-family:"Consolas",monospace;font-size:9.5px;letter-spacing:.14em;
+    padding:4px 10px;margin-right:10px;background:var(--red);color:#fff;text-transform:uppercase;
+    animation:p 1.2s steps(2) infinite;
+  }
+  @keyframes p{50%{opacity:.4}}
+  .ai-meta{
+    display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line);
+  }
+  .ai-meta div{
+    font-family:"Consolas",monospace;font-size:10px;letter-spacing:.06em;
+    padding:9px 16px;color:var(--ink);
+  }
+  .ai-meta div:nth-child(odd){border-right:1px solid var(--line)}
+  .ai-meta div:nth-child(-n+2){border-bottom:1px solid #C9C7BC}
+  .ai-meta .k{color:var(--gray);display:block;font-size:8.5px;margin-bottom:3px;letter-spacing:.2em;text-transform:uppercase}
+  .ai-body{padding:18px 20px;font-size:15px;line-height:1.95}
+  .ai-body::before{content:">>> ";color:var(--red);font-family:"Consolas",monospace;font-weight:700}
+  .caret{display:inline-block;width:9px;height:16px;background:var(--red);vertical-align:-2px;animation:p .9s steps(1) infinite}
+
+  /* 划词浮动条 */
+  .float-bar{
+    position:absolute;left:50%;top:400px;transform:translateX(-50%);z-index:20;
+    background:var(--ink);display:flex;border:2px solid var(--ink);
+    box-shadow:6px 6px 0 rgba(17,17,17,.18);
+  }
+  .float-bar .lbl{
+    font-family:"Consolas",monospace;font-size:9px;letter-spacing:.14em;color:rgba(244,244,240,.5);
+    padding:0 12px;display:flex;align-items:center;text-transform:uppercase;
+  }
+  .fbtn{
+    font-family:"Consolas",monospace;font-size:11px;letter-spacing:.16em;font-weight:700;
+    background:var(--ink);color:var(--paper);border:none;border-left:1px solid rgba(244,244,240,.25);
+    padding:10px 18px;cursor:pointer;text-transform:uppercase;
+  }
+  .fbtn:hover{background:var(--red)}
+
+  /* 角标十字 */
+  .crosshair{position:absolute;font-family:"Consolas",monospace;color:var(--gray);font-size:14px;pointer-events:none}
+  .crosshair.tl{top:18px;left:24px}
+  .crosshair.tr{top:18px;right:24px}
+  .crosshair .r{color:var(--red)}
+
+  ::-webkit-scrollbar{width:10px}
+  ::-webkit-scrollbar-thumb{background:var(--ink)}
+  ::-webkit-scrollbar-track{background:var(--paper);border-left:1px solid #C9C7BC}
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="brand">
+    <div class="brand-name">Novel<br>Studio<span>®</span></div>
+    <div class="brand-rev">REV 0.3</div>
+  </div>
+
+  <div class="side-scroll">
+    <div class="sec-head"><span>[ 作品 / WORKS ]</span><span class="cross">+</span></div>
+
+    <div class="proj active">
+      <div class="idx">01</div>
+      <div><div class="nm">烬上花开</div><div class="mt">XIANXIA · 12CH</div></div>
+      <div class="st">ACTIVE</div>
+    </div>
+    <div class="proj">
+      <div class="idx" style="color:var(--gray)">02</div>
+      <div><div class="nm" style="color:var(--gray)">北纬三十七</div><div class="mt">URBAN · 3CH</div></div>
+      <div class="st" style="color:var(--gray)">IDLE</div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active">章节 CH</div>
+      <div class="tab">设定库 LORE</div>
+    </div>
+
+    <div class="chapter"><span class="no">CH-01</span><span class="t">雪夜归人</span><span class="w">3204</span></div>
+    <div class="chapter"><span class="no">CH-02</span><span class="t">灯下图纸</span><span class="w">3517</span></div>
+    <div class="chapter"><span class="no">CH-03</span><span class="t">旧债</span><span class="w">2890</span></div>
+    <div class="chapter active"><span class="no">CH-04</span><span class="t">惊蛰</span><span class="w">2318</span></div>
+    <div class="chapter"><span class="no">CH-05</span><span class="t">未命名</span><span class="w">0000</span></div>
+  </div>
+
+  <div class="side-foot"><span>AUTOSAVE: ON</span><span>UNIT/D-01</span></div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="crumb">
+      <span class="file">FILE / JSHK-04</span>
+      <span class="name">第四章 · 惊蛰</span>
+    </div>
+    <div class="top-actions">
+      <button class="tbtn">封面</button>
+      <button class="tbtn">体检</button>
+      <button class="tbtn">导出</button>
+      <button class="tbtn">设置</button>
+      <button class="tbtn primary">AI 续写 &gt;&gt;&gt;</button>
+    </div>
+  </div>
+  <div class="hazard"></div>
+
+  <div class="float-bar">
+    <span class="lbl">SEL 24</span>
+    <button class="fbtn">改写</button>
+    <button class="fbtn">润色</button>
+    <button class="fbtn">扩写</button>
+  </div>
+
+  <div class="editor-wrap">
+    <div class="grid-lines"></div>
+    <div class="crosshair tl">+<span class="r">+</span></div>
+    <div class="crosshair tr"><span class="r">+</span>+</div>
+    <div class="doc">
+      <div class="doc-top">
+        <div class="ch-no">04<sup>®</sup></div>
+        <div>
+          <div class="doc-eyebrow">烬上花开 // 卷一 // 仙侠</div>
+          <h1 class="doc-title">惊蛰</h1>
+          <div class="doc-meta">
+            <span>2318 字</span><span>摘要 ✓</span><span>SAVED 21:47</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p>雷声是在三更天响起来的。沈砚舟披衣起身，推开半扇窗，看见院墙外那株老槐的影子被闪电劈成两半，又飞快地合拢。</p>
+        <p>他伸手接住檐角滴落的雨水。春雷惊蛰，地底的虫豸都要醒了——<span class="sel">包括那些埋了十年的旧账</span>。师父留下的那盏青铜灯还压在箱底，灯油里浸着的秘密，也该见一见光了。</p>
+        <p>巷口传来更夫的脚步声，踉踉跄跄，比平日急了几分。沈砚舟眯起眼。这镇上打更三十年的老陈头，从不会在惊蛰夜里走错路线。</p>
+      </div>
+
+      <div class="ai-block">
+        <div class="ai-head">
+          <div class="ai-title">[ AI-CONTINUE <b>///</b> STREAM ]</div>
+          <div class="ai-status">RUNNING</div>
+        </div>
+        <div class="ai-meta">
+          <div><span class="k">LORE INJECT</span>沈砚舟[常驻] / 青铜灯[命中:灯]</div>
+          <div><span class="k">SUMMARY</span>前情摘要 × 3 章</div>
+          <div><span class="k">CONTEXT TAIL</span>前文尾部 2,146 字</div>
+          <div><span class="k">BUDGET</span>设定 812/2000 字</div>
+        </div>
+        <div class="ai-body">除非，他不是走错，而是被人引到这条巷子里来的。沈砚舟吹熄了手边的烛火，整个人隐进窗影的暗处。雨声里，他听见第二个人的脚步——轻得像一片贴着地面的叶。<span class="caret"></span></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>

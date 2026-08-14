@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 A · 墨韵书房 — Novel Studio</title>
+<style>
+  :root{
+    --paper:#EFE8D8;        /* 宣纸底 */
+    --paper-2:#F6F1E5;      /* 面板 */
+    --paper-3:#FBF8F0;      /* 稿纸 */
+    --ink:#211D17;          /* 墨 */
+    --ink-soft:#4A4436;
+    --ink-faint:#8B8170;    /* 淡墨 */
+    --line:#D8CEB8;         /* 界线 */
+    --cinnabar:#A63A2B;     /* 朱砂 */
+    --cinnabar-deep:#8C2F22;
+    --dai:#3F4F4A;          /* 黛 */
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:"Microsoft YaHei","PingFang SC",sans-serif;
+    background:var(--paper);color:var(--ink);
+    display:flex;overflow:hidden;
+  }
+  .serif{font-family:"Songti SC","STSong","SimSun",serif}
+  .kaiti{font-family:"KaiTi","STKaiti",serif}
+
+  /* ---------- 侧栏 ---------- */
+  .sidebar{
+    width:264px;flex-shrink:0;background:var(--paper-2);
+    border-right:1px solid var(--line);
+    display:flex;flex-direction:column;height:100vh;
+  }
+  .brand{
+    display:flex;align-items:center;gap:12px;
+    padding:18px 18px 16px;border-bottom:1px solid var(--line);
+  }
+  .seal{
+    width:42px;height:42px;background:var(--cinnabar);color:#FBF6EA;
+    display:flex;align-items:center;justify-content:center;
+    font-family:"KaiTi","STKaiti",serif;font-size:22px;font-weight:700;
+    border-radius:4px;box-shadow:inset 0 0 0 2px rgba(251,246,234,.35);
+    transform:rotate(-2deg);
+  }
+  .brand-name{font-family:"Songti SC","SimSun",serif;font-size:17px;font-weight:700;letter-spacing:.06em}
+  .brand-sub{font-size:10px;color:var(--ink-faint);letter-spacing:.18em;margin-top:2px}
+
+  .side-scroll{flex:1;overflow-y:auto;padding:14px 0}
+  .side-label{
+    padding:0 18px;font-size:11px;letter-spacing:.3em;color:var(--ink-faint);
+    display:flex;align-items:center;gap:8px;margin:6px 0 8px;
+  }
+  .side-label::after{content:"";flex:1;height:1px;background:var(--line)}
+  .proj{
+    padding:7px 18px;cursor:pointer;border-left:2px solid transparent;
+    font-family:"Songti SC","SimSun",serif;font-size:14.5px;
+  }
+  .proj small{display:block;font-family:"Microsoft YaHei",sans-serif;font-size:10.5px;color:var(--ink-faint);margin-top:1px;letter-spacing:.05em}
+  .proj:hover{background:rgba(166,58,43,.05)}
+  .proj.active{border-left-color:var(--cinnabar);background:rgba(166,58,43,.07)}
+  .proj.dim{color:var(--ink-soft)}
+
+  .tabs{display:flex;margin:14px 18px 4px;border-bottom:1px solid var(--line)}
+  .tab{
+    padding:6px 2px;margin-right:18px;font-size:13px;color:var(--ink-faint);
+    cursor:pointer;position:relative;letter-spacing:.12em;
+  }
+  .tab.active{color:var(--ink);font-weight:600}
+  .tab.active::after{
+    content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--cinnabar);
+  }
+  .chapters{padding:6px 0}
+  .chapter{
+    padding:8px 18px;cursor:pointer;display:flex;align-items:baseline;gap:9px;
+    border-left:2px solid transparent;
+  }
+  .chapter:hover{background:rgba(166,58,43,.05)}
+  .chapter.active{background:rgba(166,58,43,.08);border-left-color:var(--cinnabar)}
+  .chapter .no{font-size:10.5px;color:var(--ink-faint);font-family:"Consolas",monospace;letter-spacing:.05em}
+  .chapter .t{font-family:"Songti SC","SimSun",serif;font-size:14.5px}
+  .chapter.active .t{color:var(--cinnabar-deep);font-weight:700}
+  .chapter .w{margin-left:auto;font-size:10px;color:var(--ink-faint)}
+  .add-btn{
+    margin:8px 18px 0;padding:6px 0;font-size:12px;color:var(--ink-faint);
+    border:1px dashed var(--line);text-align:center;cursor:pointer;letter-spacing:.2em;
+  }
+  .add-btn:hover{color:var(--cinnabar);border-color:var(--cinnabar)}
+  .side-foot{
+    border-top:1px solid var(--line);padding:10px 18px;
+    font-size:11px;color:var(--ink-faint);letter-spacing:.08em;
+    writing-mode:horizontal-tb;display:flex;justify-content:space-between;
+  }
+
+  /* ---------- 主区 ---------- */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+  .topbar{
+    height:52px;flex-shrink:0;display:flex;align-items:center;
+    padding:0 22px;border-bottom:1px solid var(--line);background:var(--paper-2);
+  }
+  .crumb{font-family:"Songti SC","SimSun",serif;font-size:14px;color:var(--ink-soft);letter-spacing:.05em}
+  .crumb b{color:var(--ink)}
+  .top-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .tbtn{
+    font-size:12.5px;color:var(--ink-soft);padding:6px 12px;cursor:pointer;
+    border:1px solid transparent;letter-spacing:.1em;background:none;font-family:inherit;
+  }
+  .tbtn:hover{color:var(--cinnabar);border-color:var(--line);background:var(--paper-3)}
+  .tbtn.primary{
+    border:1px solid var(--cinnabar);color:var(--cinnabar);
+  }
+  .tbtn.primary:hover{background:var(--cinnabar);color:#FBF6EA}
+
+  /* 竖排装饰 */
+  .vertical-poem{
+    position:absolute;right:14px;top:50%;transform:translateY(-50%);
+    writing-mode:vertical-rl;font-family:"KaiTi","STKaiti",serif;
+    font-size:13px;letter-spacing:.5em;color:var(--ink-faint);opacity:.55;
+    user-select:none;pointer-events:none;
+  }
+
+  /* 稿纸编辑区 */
+  .editor-wrap{flex:1;overflow-y:auto;padding:36px 48px 120px;display:flex;justify-content:center}
+  .manuscript{width:700px;max-width:100%}
+  .ch-head{text-align:center;margin-bottom:34px;position:relative}
+  .ch-eyebrow{font-size:11px;letter-spacing:.4em;color:var(--ink-faint);margin-bottom:10px}
+  .ch-title{
+    font-family:"Songti SC","STSong","SimSun",serif;
+    font-size:34px;font-weight:700;letter-spacing:.14em;color:var(--ink);
+  }
+  .ch-meta{margin-top:12px;font-size:11.5px;color:var(--ink-faint);letter-spacing:.12em}
+  .ch-rule{display:flex;align-items:center;gap:10px;margin-top:16px}
+  .ch-rule::before,.ch-rule::after{content:"";flex:1;border-top:1px solid var(--ink-faint);border-bottom:2px solid var(--ink);height:4px;opacity:.35}
+  .ch-rule .diamond{width:7px;height:7px;background:var(--cinnabar);transform:rotate(45deg)}
+
+  .prose{font-family:"Songti SC","STSong","SimSun",serif;font-size:17.5px;line-height:2.15;color:#2A251D}
+  .prose p{text-indent:2em;margin-bottom:1.1em}
+  .prose .sel{background:rgba(166,58,43,.16);padding:1px 0}
+
+  /* AI 续写区 */
+  .ai-block{margin-top:44px;border:1px solid var(--line);background:var(--paper-3);position:relative}
+  .ai-block::before{
+    content:"";position:absolute;left:-1px;top:-1px;width:34px;height:34px;
+    border-top:2px solid var(--cinnabar);border-left:2px solid var(--cinnabar);
+  }
+  .ai-head{
+    display:flex;align-items:center;gap:10px;padding:12px 18px;
+    border-bottom:1px solid var(--line);
+  }
+  .ai-seal{
+    width:26px;height:26px;background:var(--cinnabar);color:#FBF6EA;border-radius:3px;
+    display:flex;align-items:center;justify-content:center;font-family:"KaiTi",serif;font-size:13px;
+  }
+  .ai-title{font-size:13px;letter-spacing:.2em;color:var(--ink-soft)}
+  .ai-status{margin-left:auto;font-size:11px;color:var(--cinnabar);letter-spacing:.1em;display:flex;align-items:center;gap:6px}
+  .blink{width:7px;height:14px;background:var(--cinnabar);animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .ai-meta{
+    padding:8px 18px;border-bottom:1px dashed var(--line);
+    font-size:11px;color:var(--ink-faint);letter-spacing:.04em;line-height:1.8;
+  }
+  .ai-meta b{color:var(--dai);font-weight:600}
+  .ai-body{padding:16px 18px 20px;font-family:"Songti SC","SimSun",serif;font-size:16px;line-height:2;color:var(--ink-soft)}
+  .ai-body p{text-indent:2em}
+
+  /* 划词浮动条 */
+  .float-bar{
+    position:absolute;left:50%;top:340px;transform:translateX(-50%);
+    background:var(--ink);color:#EFE8D8;display:flex;align-items:center;
+    padding:8px 6px;border-radius:3px;box-shadow:0 8px 24px rgba(33,29,23,.28);
+    z-index:20;
+  }
+  .float-bar::after{
+    content:"";position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);
+    border:6px solid transparent;border-top-color:var(--ink);border-bottom:0;
+  }
+  .fbtn{
+    background:none;border:none;color:#EFE8D8;font-family:inherit;font-size:12.5px;
+    letter-spacing:.15em;padding:5px 14px;cursor:pointer;position:relative;
+  }
+  .fbtn:hover{color:#fff}
+  .fbtn:hover::after{content:"";position:absolute;left:14px;right:14px;bottom:2px;height:1px;background:var(--cinnabar)}
+  .fsep{width:1px;height:16px;background:rgba(239,232,216,.25)}
+  .fhint{font-size:10px;color:rgba(239,232,216,.5);padding:0 10px 0 4px;letter-spacing:.1em}
+
+  ::-webkit-scrollbar{width:10px}
+  ::-webkit-scrollbar-thumb{background:#CFC5AE;border:3px solid var(--paper)}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="brand">
+    <div class="seal">墨</div>
+    <div>
+      <div class="brand-name serif">Novel Studio</div>
+      <div class="brand-sub">AI 小说创作工作室</div>
+    </div>
+  </div>
+
+  <div class="side-scroll">
+    <div class="side-label">作品</div>
+    <div class="proj active">烬上花开<small>仙侠 · 12 章 · 4.2 万字</small></div>
+    <div class="proj dim">北纬三十七<small>都市 · 3 章 · 8,600 字</small></div>
+
+    <div class="tabs">
+      <div class="tab active">章节</div>
+      <div class="tab">设定库</div>
+    </div>
+
+    <div class="chapters">
+      <div class="chapter"><span class="no">壹</span><span class="t serif">雪夜归人</span><span class="w">3,204</span></div>
+      <div class="chapter"><span class="no">贰</span><span class="t serif">灯下图纸</span><span class="w">3,517</span></div>
+      <div class="chapter"><span class="no">叁</span><span class="t serif">旧债</span><span class="w">2,890</span></div>
+      <div class="chapter active"><span class="no">肆</span><span class="t serif">惊蛰</span><span class="w">2,318</span></div>
+      <div class="chapter"><span class="no">伍</span><span class="t serif">未命名</span><span class="w">0</span></div>
+    </div>
+    <div class="add-btn">＋ 新章</div>
+  </div>
+
+  <div class="side-foot"><span>已自动保存</span><span>21:47</span></div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="crumb serif">烬上花开 · <b>第四章 惊蛰</b></div>
+    <div class="top-actions">
+      <button class="tbtn">封面</button>
+      <button class="tbtn">体检</button>
+      <button class="tbtn">导出</button>
+      <button class="tbtn">设置</button>
+      <button class="tbtn primary">AI 续写</button>
+    </div>
+  </div>
+
+  <div class="vertical-poem">文章本天成　妙手偶得之</div>
+
+  <div class="float-bar">
+    <span class="fhint">已选 24 字</span>
+    <button class="fbtn">改写</button><span class="fsep"></span>
+    <button class="fbtn">润色</button><span class="fsep"></span>
+    <button class="fbtn">扩写</button>
+  </div>
+
+  <div class="editor-wrap">
+    <div class="manuscript">
+      <div class="ch-head">
+        <div class="ch-eyebrow">烬上花开 · 卷一</div>
+        <h1 class="ch-title serif">第四章　惊蛰</h1>
+        <div class="ch-meta">2,318 字 · 摘要已生成 · 上次保存 21:47</div>
+        <div class="ch-rule"><span class="diamond"></span></div>
+      </div>
+
+      <div class="prose">
+        <p>雷声是在三更天响起来的。沈砚舟披衣起身，推开半扇窗，看见院墙外那株老槐的影子被闪电劈成两半，又飞快地合拢。</p>
+        <p>他伸手接住檐角滴落的雨水。春雷惊蛰，地底的虫豸都要醒了——<span class="sel">包括那些埋了十年的旧账</span>。师父留下的那盏青铜灯还压在箱底，灯油里浸着的秘密，也该见一见光了。</p>
+        <p>巷口传来更夫的脚步声，踉踉跄跄，比平日急了几分。沈砚舟眯起眼。这镇上打更三十年的老陈头，从不会在惊蛰夜里走错路线。</p>
+      </div>
+
+      <div class="ai-block">
+        <div class="ai-head">
+          <div class="ai-seal">续</div>
+          <div class="ai-title">AI 续写进行中</div>
+          <div class="ai-status"><span class="blink"></span>生成中</div>
+        </div>
+        <div class="ai-meta">
+          注入设定：<b>沈砚舟</b>（常驻）· <b>烬火·青铜灯</b>（命中关键词「灯」）　|　前情摘要：<b>3 章</b>　|　前文尾部：<b>2,146 字</b>
+        </div>
+        <div class="ai-body">
+          <p>除非，他不是走错，而是被人引到这条巷子里来的。沈砚舟吹熄了手边的烛火，整个人隐进窗影的暗处。雨声里，他听见第二个人的脚步——轻得像一片贴着地面的叶。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>

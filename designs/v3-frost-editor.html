@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>V3 雾白 · 写作 — Novel Studio</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei",sans-serif;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#C9D6E8 0%,#D8D2E4 45%,#E8DDD2 100%);
+  }
+  .serif{font-family:"Songti SC","STSong","SimSun",serif}
+
+  .win{
+    width:1280px;height:820px;border-radius:14px;overflow:hidden;
+    display:flex;flex-direction:column;
+    background:rgba(250,250,252,.72);backdrop-filter:blur(40px);
+    box-shadow:0 32px 80px rgba(60,60,90,.28),0 4px 16px rgba(60,60,90,.14);
+    outline:1px solid rgba(255,255,255,.5);
+  }
+  .caption{
+    height:46px;flex-shrink:0;display:flex;align-items:center;
+    padding-left:16px;user-select:none;
+  }
+  .caption .app{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;color:#3A3A3E}
+  .caption .app .logo{
+    width:19px;height:19px;border-radius:6px;
+    background:linear-gradient(135deg,#5B8DEF,#7B61C9);
+    color:#fff;display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:700;box-shadow:0 2px 6px rgba(91,141,239,.4);
+  }
+  .caption .path{font-size:12px;color:#8E8E93;margin-left:18px}
+  .caption .path b{color:#3A3A3E;font-weight:500}
+  .win-controls{margin-left:auto;display:flex;height:100%}
+  .wbtn{
+    width:46px;height:100%;border:none;background:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;color:#6B6B70;
+  }
+  .wbtn:hover{background:rgba(60,60,90,.08);color:#1C1C1E}
+  .wbtn.close:hover{background:#E81123;color:#fff}
+  .wbtn svg{width:12px;height:12px}
+
+  .main{flex:1;display:flex;min-height:0}
+
+  /* 亚克力侧栏 */
+  .side{
+    width:248px;flex-shrink:0;display:flex;flex-direction:column;padding:14px 12px;
+    background:rgba(255,255,255,.45);
+  }
+  .back{
+    display:flex;align-items:center;gap:7px;background:none;border:none;cursor:pointer;
+    color:#6B6B70;font-family:inherit;font-size:12.5px;padding:7px 10px;border-radius:9px;
+  }
+  .back:hover{background:rgba(255,255,255,.7);color:#1C1C1E}
+  .back svg{width:13px;height:13px}
+  .seg{
+    display:flex;margin:12px 10px 10px;background:rgba(60,60,90,.07);
+    border-radius:10px;padding:3px;
+  }
+  .seg button{
+    flex:1;border:none;background:none;font-family:inherit;font-size:12px;
+    padding:5px 0;border-radius:7px;color:#6B6B70;cursor:pointer;
+  }
+  .seg button.on{background:#fff;color:#1C1C1E;box-shadow:0 1px 4px rgba(60,60,90,.14)}
+  .ch{
+    display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;
+    font-family:inherit;padding:8px 10px;border-radius:9px;
+  }
+  .ch:hover{background:rgba(255,255,255,.55)}
+  .ch.on{background:#fff;box-shadow:0 2px 8px rgba(60,60,90,.1)}
+  .ch .t{font-size:13px;color:#3A3A3E}
+  .ch.on .t{color:#1C1C1E;font-weight:600}
+  .ch .w{font-size:10.5px;color:#AEAEB2;margin-top:2px}
+  .side-foot{margin-top:auto;padding:8px 10px;font-size:11px;color:#AEAEB2;display:flex;align-items:center;gap:7px}
+  .okdot{width:6px;height:6px;border-radius:99px;background:#34C759}
+
+  .editor{flex:1;display:flex;flex-direction:column;min-width:0}
+  .toolbar{
+    flex-shrink:0;display:flex;align-items:center;gap:8px;padding:12px 24px;
+  }
+  .toolbar input{
+    flex:1;min-width:0;background:rgba(255,255,255,.6);border:none;border-radius:10px;
+    padding:9px 13px;font-family:inherit;font-size:12.5px;color:#3A3A3E;outline:none;
+    box-shadow:0 1px 4px rgba(60,60,90,.07);
+  }
+  .toolbar input::placeholder{color:#AEAEB2}
+  .toolbar input:focus{background:#fff;box-shadow:0 2px 10px rgba(60,60,90,.12)}
+  .cta{
+    display:flex;align-items:center;gap:7px;border:none;cursor:pointer;
+    background:#007AFF;color:#fff;font-family:inherit;font-size:12.5px;font-weight:600;
+    padding:9px 18px;border-radius:99px;box-shadow:0 4px 14px rgba(0,122,255,.32);
+  }
+  .cta:hover{background:#1A88FF}
+  .ghost{
+    border:none;background:none;cursor:pointer;font-family:inherit;
+    font-size:12.5px;color:#6B6B70;padding:8px 11px;border-radius:9px;
+  }
+  .ghost:hover{background:rgba(255,255,255,.65);color:#1C1C1E}
+
+  .scroll{flex:1;overflow-y:auto;padding:20px 48px 100px;display:flex;justify-content:center}
+  .doc{width:660px;max-width:100%}
+  .doc h1{
+    font-family:"Songti SC","STSong","SimSun",serif;
+    font-size:34px;font-weight:700;color:#1C1C1E;letter-spacing:.01em;
+  }
+  .doc .meta{margin-top:10px;font-size:12px;color:#8E8E93;display:flex;gap:12px}
+  .prose{
+    margin-top:28px;font-family:"Songti SC","STSong","SimSun",serif;
+    font-size:17px;line-height:2.05;color:#2C2C2E;
+  }
+  .prose p{margin-bottom:1.1em}
+  .prose .sel{background:rgba(0,122,255,.16);padding:1px 0}
+
+  .ai{
+    margin-top:38px;background:rgba(255,255,255,.65);border-radius:16px;
+    padding:18px 20px;box-shadow:0 4px 20px rgba(60,60,90,.1);
+  }
+  .ai-h{display:flex;align-items:center;gap:9px}
+  .ai-h .pulse{width:7px;height:7px;border-radius:99px;background:#007AFF;animation:p 1.3s ease-in-out infinite}
+  @keyframes p{50%{opacity:.3}}
+  .ai-h .t{font-size:12.5px;font-weight:600;color:#1C1C1E}
+  .ai-h .s{margin-left:auto;font-size:11px;color:#007AFF}
+  .ai-tags{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+  .tag{
+    font-size:11px;padding:4px 10px;border-radius:99px;
+    background:rgba(60,60,90,.07);color:#6B6B70;
+  }
+  .tag.hot{background:rgba(0,122,255,.1);color:#007AFF}
+  .ai-b{
+    margin-top:12px;font-family:"Songti SC","SimSun",serif;font-size:15.5px;
+    line-height:1.95;color:#3A3A3E;padding-left:14px;border-left:2px solid rgba(0,122,255,.35);
+  }
+  .caret{display:inline-block;width:8px;height:16px;background:#007AFF;border-radius:2px;vertical-align:-2px;animation:p 1s steps(1) infinite}
+
+  .floatbar{
+    position:absolute;background:rgba(40,40,44,.92);backdrop-filter:blur(16px);
+    border-radius:12px;box-shadow:0 12px 32px rgba(30,30,40,.35);
+    display:flex;padding:4px;gap:2px;
+  }
+  .floatbar button{
+    border:none;background:none;font-family:inherit;font-size:12px;font-weight:500;
+    color:#E5E5EA;padding:6px 13px;border-radius:8px;cursor:pointer;
+  }
+  .floatbar button:hover{background:rgba(255,255,255,.14);color:#fff}
+  .float-wrap{position:relative}
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="caption">
+    <div class="app"><div class="logo">N</div>Novel Studio</div>
+    <div class="path">烬上花开&nbsp;&nbsp;/&nbsp;&nbsp;<b>第四章 惊蛰</b></div>
+    <div class="win-controls">
+      <button class="wbtn"><svg viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button class="wbtn"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button class="wbtn close"><svg viewBox="0 0 12 12"><path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    </div>
+  </div>
+
+  <div class="main">
+    <aside class="side">
+      <button class="back"><svg viewBox="0 0 14 14"><path d="M9 2 L4 7 L9 12" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>书架</button>
+      <div class="seg"><button class="on">章节</button><button>设定库</button></div>
+      <button class="ch"><div class="t">第一章 雪夜归人</div><div class="w">3,204 字</div></button>
+      <button class="ch"><div class="t">第二章 灯下图纸</div><div class="w">3,517 字</div></button>
+      <button class="ch"><div class="t">第三章 旧债</div><div class="w">2,890 字</div></button>
+      <button class="ch on"><div class="t">第四章 惊蛰</div><div class="w">2,318 字</div></button>
+      <button class="ch"><div class="t">第五章 未命名</div><div class="w">0 字</div></button>
+      <div class="side-foot"><span class="okdot"></span>已保存 · 21:47</div>
+    </aside>
+
+    <section class="editor">
+      <div class="toolbar">
+        <input placeholder="续写要求（可选），如：让主角在此刻觉醒血脉">
+        <button class="cta">AI 续写</button>
+        <button class="ghost">封面</button>
+        <button class="ghost">体检</button>
+        <button class="ghost">导出</button>
+      </div>
+
+      <div class="scroll">
+        <div class="doc float-wrap">
+          <h1 class="serif">第四章 惊蛰</h1>
+          <div class="meta"><span>2,318 字</span><span>摘要已生成</span><span>已保存 21:47</span></div>
+
+          <div class="prose">
+            <p>雷声是在三更天响起来的。沈砚舟披衣起身，推开半扇窗，看见院墙外那株老槐的影子被闪电劈成两半，又飞快地合拢。</p>
+            <p>他伸手接住檐角滴落的雨水。春雷惊蛰，地底的虫豸都要醒了——<span class="sel">包括那些埋了十年的旧账</span>。师父留下的那盏青铜灯还压在箱底，灯油里浸着的秘密，也该见一见光了。</p>
+            <p>巷口传来更夫的脚步声，踉踉跄跄，比平日急了几分。沈砚舟眯起眼。这镇上打更三十年的老陈头，从不会在惊蛰夜里走错路线。</p>
+          </div>
+
+          <div class="floatbar" style="top:266px;left:430px">
+            <button>改写</button><button>润色</button><button>扩写</button>
+          </div>
+
+          <div class="ai">
+            <div class="ai-h">
+              <span class="pulse"></span><span class="t">AI 续写进行中</span>
+              <span class="s">生成中</span>
+            </div>
+            <div class="ai-tags">
+              <span class="tag hot">沈砚舟 · 常驻</span>
+              <span class="tag hot">烬火·青铜灯 · 命中「灯」</span>
+              <span class="tag">前情摘要 ×3</span>
+              <span class="tag">前文尾部 2,146 字</span>
+            </div>
+            <div class="ai-b">除非，他不是走错，而是被人引到这条巷子里来的。沈砚舟吹熄了手边的烛火，整个人隐进窗影的暗处。雨声里，他听见第二个人的脚步——轻得像一片贴着地面的叶。<span class="caret"></span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>

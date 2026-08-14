@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案 C · 高端暗色 — Novel Studio</title>
+<style>
+  :root{
+    --bg:#050505;
+    --panel:#0B0B0D;
+    --core:#101013;
+    --line:rgba(255,255,255,.08);
+    --line-soft:rgba(255,255,255,.05);
+    --text:#F2F2F3;
+    --text-2:#9B9BA1;
+    --text-3:#5C5C63;
+    --violet:#A79BFF;
+    --ease:cubic-bezier(0.32,0.72,0,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+    background:var(--bg);color:var(--text);
+    display:flex;overflow:hidden;font-size:14px;position:relative;
+  }
+  /* 氛围光晕 */
+  .glow{
+    position:fixed;pointer-events:none;z-index:0;border-radius:50%;
+    filter:blur(90px);
+  }
+  .glow.a{width:560px;height:560px;left:-140px;top:-180px;
+    background:radial-gradient(circle,rgba(124,108,255,.16),transparent 65%)}
+  .glow.b{width:480px;height:480px;right:-120px;bottom:-160px;
+    background:radial-gradient(circle,rgba(64,180,160,.09),transparent 65%)}
+
+  /* ---------- 侧栏 ---------- */
+  .sidebar{
+    width:264px;flex-shrink:0;height:100vh;position:relative;z-index:1;
+    background:rgba(11,11,13,.82);backdrop-filter:blur(20px);
+    border-right:1px solid var(--line);
+    display:flex;flex-direction:column;
+  }
+  .brand{
+    padding:18px;display:flex;align-items:center;gap:11px;
+    border-bottom:1px solid var(--line-soft);
+  }
+  .logo{
+    width:30px;height:30px;border-radius:9px;
+    background:linear-gradient(135deg,#7C6CFF,#4A3FD6);
+    display:flex;align-items:center;justify-content:center;font-size:14px;
+    box-shadow:0 0 18px rgba(124,108,255,.4),inset 0 1px 1px rgba(255,255,255,.3);
+  }
+  .brand-name{font-weight:600;font-size:14px;letter-spacing:-0.01em}
+  .brand-sub{font-size:10.5px;color:var(--text-3);letter-spacing:.12em;text-transform:uppercase;font-family:"Consolas",monospace}
+
+  .side-scroll{flex:1;overflow-y:auto;padding:14px 12px}
+  .side-label{
+    font-size:10px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--text-3);padding:4px 10px;margin-bottom:8px;font-family:"Consolas",monospace;
+  }
+
+  /* 双嵌套卡片 */
+  .bezel{
+    background:rgba(255,255,255,.04);border:1px solid var(--line-soft);
+    border-radius:14px;padding:3px;margin-bottom:8px;
+  }
+  .bezel-in{
+    background:var(--core);border-radius:11px;padding:9px 11px;
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.06);
+    display:flex;align-items:center;gap:10px;cursor:pointer;
+    transition:border-color .3s var(--ease);
+  }
+  .bezel.active{border-color:rgba(167,155,255,.35)}
+  .bezel.active .bezel-in{box-shadow:inset 0 1px 1px rgba(255,255,255,.08),0 0 14px rgba(124,108,255,.12)}
+  .bezel:hover:not(.active){border-color:rgba(255,255,255,.12)}
+  .picon{
+    width:26px;height:26px;border-radius:8px;flex-shrink:0;
+    background:rgba(167,155,255,.12);color:var(--violet);
+    display:flex;align-items:center;justify-content:center;font-size:12px;
+  }
+  .picon.gray{background:rgba(255,255,255,.06);color:var(--text-2)}
+  .pnm{font-size:13px;font-weight:500}
+  .pmt{font-size:10.5px;color:var(--text-3);font-family:"Consolas",monospace}
+
+  .tabs{
+    display:flex;gap:4px;margin:16px 2px 10px;padding:3px;
+    background:rgba(255,255,255,.04);border:1px solid var(--line-soft);border-radius:10px;
+  }
+  .tab{
+    flex:1;text-align:center;font-size:12px;padding:5px 0;border-radius:7px;
+    color:var(--text-3);cursor:pointer;font-weight:500;transition:all .3s var(--ease);
+  }
+  .tab.active{background:rgba(255,255,255,.08);color:var(--text)}
+
+  .chapter{
+    display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;
+    cursor:pointer;transition:background .25s var(--ease);
+  }
+  .chapter:hover{background:rgba(255,255,255,.05)}
+  .chapter.active{background:rgba(167,155,255,.1)}
+  .chapter .no{
+    font-family:"Consolas",monospace;font-size:10px;color:var(--text-3);width:18px;
+  }
+  .chapter.active .no{color:var(--violet)}
+  .chapter .t{font-size:13px;color:var(--text-2)}
+  .chapter.active .t{color:var(--text)}
+  .chapter .w{margin-left:auto;font-size:10px;color:var(--text-3);font-family:"Consolas",monospace}
+
+  .side-foot{
+    border-top:1px solid var(--line-soft);padding:12px 16px;
+    font-size:10.5px;color:var(--text-3);font-family:"Consolas",monospace;letter-spacing:.08em;
+    display:flex;align-items:center;gap:7px;
+  }
+  .ok{width:6px;height:6px;border-radius:99px;background:#4ADE80;box-shadow:0 0 8px rgba(74,222,128,.6)}
+
+  /* ---------- 主区 ---------- */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;z-index:1}
+  .topbar{
+    height:56px;flex-shrink:0;display:flex;align-items:center;gap:10px;
+    padding:0 22px;border-bottom:1px solid var(--line-soft);
+    background:rgba(5,5,5,.6);backdrop-filter:blur(20px);
+  }
+  .crumb{font-size:13px;color:var(--text-3)}
+  .crumb b{color:var(--text);font-weight:500}
+  .top-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .tbtn{
+    font-family:inherit;font-size:12.5px;color:var(--text-2);padding:7px 12px;border-radius:8px;
+    border:1px solid transparent;background:none;cursor:pointer;transition:all .3s var(--ease);
+  }
+  .tbtn:hover{color:var(--text);background:rgba(255,255,255,.06)}
+  .cta{
+    display:flex;align-items:center;gap:8px;margin-left:6px;
+    background:var(--text);color:#0A0A0B;border:none;cursor:pointer;
+    font-family:inherit;font-size:12.5px;font-weight:600;
+    padding:5px 5px 5px 16px;border-radius:999px;transition:all .3s var(--ease);
+  }
+  .cta:hover{box-shadow:0 0 24px rgba(167,155,255,.35)}
+  .cta:active{transform:scale(.97)}
+  .cta .ic{
+    width:26px;height:26px;border-radius:999px;background:rgba(0,0,0,.12);
+    display:flex;align-items:center;justify-content:center;font-size:12px;
+    transition:transform .3s var(--ease);
+  }
+  .cta:hover .ic{transform:translate(2px,-1px)}
+
+  .editor-wrap{flex:1;overflow-y:auto;padding:48px 48px 140px;display:flex;justify-content:center}
+  .doc{width:680px;max-width:100%}
+  .doc-eyebrow{
+    display:inline-flex;align-items:center;gap:8px;margin-bottom:16px;
+    font-family:"Consolas",monospace;font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--violet);border:1px solid rgba(167,155,255,.3);border-radius:999px;padding:5px 12px;
+    background:rgba(124,108,255,.06);
+  }
+  .doc-title{
+    font-size:40px;font-weight:700;letter-spacing:-0.03em;line-height:1.1;
+    background:linear-gradient(180deg,#FFFFFF,#B9B9C4);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .doc-meta{
+    margin-top:14px;font-size:11.5px;color:var(--text-3);
+    font-family:"Consolas",monospace;letter-spacing:.06em;display:flex;gap:16px;
+  }
+
+  .prose{margin-top:30px;font-size:16.5px;line-height:1.95;color:#C9C9CF}
+  .prose p{margin-bottom:1.2em}
+  .prose .sel{
+    background:rgba(167,155,255,.22);color:#fff;padding:1px 2px;border-radius:3px;
+    box-shadow:0 0 0 1px rgba(167,155,255,.3);
+  }
+
+  /* AI 卡片（双嵌套） */
+  .ai-bezel{
+    margin-top:44px;background:rgba(255,255,255,.04);
+    border:1px solid var(--line-soft);border-radius:20px;padding:6px;
+  }
+  .ai-core{
+    background:var(--core);border-radius:15px;padding:20px 22px;
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.07);
+  }
+  .ai-head{display:flex;align-items:center;gap:11px;margin-bottom:14px}
+  .ai-avatar{
+    width:28px;height:28px;border-radius:9px;
+    background:linear-gradient(135deg,#7C6CFF,#4A3FD6);
+    display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;
+    box-shadow:0 0 14px rgba(124,108,255,.45);
+  }
+  .ai-title{font-size:13.5px;font-weight:600}
+  .ai-status{
+    margin-left:auto;font-family:"Consolas",monospace;font-size:10px;letter-spacing:.14em;
+    color:var(--violet);text-transform:uppercase;display:flex;align-items:center;gap:7px;
+  }
+  .ai-status .dot{
+    width:6px;height:6px;border-radius:99px;background:var(--violet);
+    box-shadow:0 0 10px var(--violet);animation:p 1.4s ease-in-out infinite;
+  }
+  @keyframes p{50%{opacity:.25}}
+  .ai-meta{
+    display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;
+  }
+  .chip{
+    font-family:"Consolas",monospace;font-size:10.5px;letter-spacing:.04em;
+    padding:4px 10px;border-radius:999px;border:1px solid var(--line);
+    color:var(--text-2);background:rgba(255,255,255,.03);
+  }
+  .chip.hl{border-color:rgba(167,155,255,.35);color:var(--violet);background:rgba(124,108,255,.07)}
+  .ai-body{
+    font-size:15.5px;line-height:1.9;color:#D8D8DE;
+    border-left:2px solid rgba(167,155,255,.4);padding-left:16px;
+  }
+  .caret{
+    display:inline-block;width:9px;height:17px;vertical-align:-3px;margin-left:2px;
+    background:linear-gradient(180deg,#A79BFF,#7C6CFF);border-radius:2px;
+    box-shadow:0 0 10px rgba(124,108,255,.7);animation:p 1s steps(1) infinite;
+  }
+
+  /* 划词浮动条 */
+  .float-bezel{
+    position:absolute;left:50%;top:352px;transform:translateX(-50%);z-index:20;
+    background:rgba(255,255,255,.06);border:1px solid var(--line);
+    border-radius:14px;padding:4px;backdrop-filter:blur(16px);
+    box-shadow:0 16px 40px rgba(0,0,0,.5);
+  }
+  .float-in{
+    background:#141417;border-radius:10px;display:flex;align-items:center;padding:3px;
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.08);
+  }
+  .fbtn{
+    font-family:inherit;font-size:12.5px;font-weight:500;color:var(--text-2);
+    background:none;border:none;padding:7px 14px;border-radius:8px;cursor:pointer;
+    transition:all .25s var(--ease);
+  }
+  .fbtn:hover{color:var(--text);background:rgba(255,255,255,.07)}
+  .fbtn.hot{color:var(--violet)}
+  .fsep{width:1px;height:16px;background:var(--line)}
+
+  ::-webkit-scrollbar{width:10px}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border:3px solid var(--bg);border-radius:99px}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+
+<div class="glow a"></div>
+<div class="glow b"></div>
+
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">✦</div>
+    <div>
+      <div class="brand-name">Novel Studio</div>
+      <div class="brand-sub">Writing OS</div>
+    </div>
+  </div>
+
+  <div class="side-scroll">
+    <div class="side-label">Projects</div>
+    <div class="bezel active"><div class="bezel-in">
+      <div class="picon">烬</div>
+      <div><div class="pnm">烬上花开</div><div class="pmt">12 CH · 42K WORDS</div></div>
+    </div></div>
+    <div class="bezel"><div class="bezel-in">
+      <div class="picon gray">北</div>
+      <div><div class="pnm" style="color:var(--text-2)">北纬三十七</div><div class="pmt">3 CH · 8.6K</div></div>
+    </div></div>
+
+    <div class="tabs">
+      <div class="tab active">章节</div>
+      <div class="tab">设定库</div>
+    </div>
+
+    <div class="chapter"><span class="no">01</span><span class="t">雪夜归人</span><span class="w">3.2K</span></div>
+    <div class="chapter"><span class="no">02</span><span class="t">灯下图纸</span><span class="w">3.5K</span></div>
+    <div class="chapter"><span class="no">03</span><span class="t">旧债</span><span class="w">2.9K</span></div>
+    <div class="chapter active"><span class="no">04</span><span class="t">惊蛰</span><span class="w">2.3K</span></div>
+    <div class="chapter"><span class="no">05</span><span class="t">未命名</span><span class="w">—</span></div>
+  </div>
+
+  <div class="side-foot"><span class="ok"></span>SYNCED · 21:47</div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="crumb">烬上花开 <span style="margin:0 4px">/</span> <b>第四章 惊蛰</b></div>
+    <div class="top-actions">
+      <button class="tbtn">封面</button>
+      <button class="tbtn">体检</button>
+      <button class="tbtn">导出</button>
+      <button class="tbtn">设置</button>
+      <button class="cta">AI 续写<span class="ic">↵</span></button>
+    </div>
+  </div>
+
+  <div class="float-bezel"><div class="float-in">
+    <button class="fbtn hot">改写</button><span class="fsep"></span>
+    <button class="fbtn">润色</button><span class="fsep"></span>
+    <button class="fbtn">扩写</button>
+  </div></div>
+
+  <div class="editor-wrap">
+    <div class="doc">
+      <div class="doc-eyebrow">◈ 仙侠 · 卷一 · CHAPTER 04</div>
+      <h1 class="doc-title">第四章 惊蛰</h1>
+      <div class="doc-meta"><span>2,318 WORDS</span><span>SUMMARY ✓</span><span>SAVED 21:47</span></div>
+
+      <div class="prose">
+        <p>雷声是在三更天响起来的。沈砚舟披衣起身，推开半扇窗，看见院墙外那株老槐的影子被闪电劈成两半，又飞快地合拢。</p>
+        <p>他伸手接住檐角滴落的雨水。春雷惊蛰，地底的虫豸都要醒了——<span class="sel">包括那些埋了十年的旧账</span>。师父留下的那盏青铜灯还压在箱底，灯油里浸着的秘密，也该见一见光了。</p>
+        <p>巷口传来更夫的脚步声，踉踉跄跄，比平日急了几分。沈砚舟眯起眼。这镇上打更三十年的老陈头，从不会在惊蛰夜里走错路线。</p>
+      </div>
+
+      <div class="ai-bezel"><div class="ai-core">
+        <div class="ai-head">
+          <div class="ai-avatar">✦</div>
+          <div class="ai-title">AI 续写</div>
+          <div class="ai-status"><span class="dot"></span>Generating</div>
+        </div>
+        <div class="ai-meta">
+          <span class="chip hl">沈砚舟 · 常驻注入</span>
+          <span class="chip hl">烬火·青铜灯 · 命中「灯」</span>
+          <span class="chip">前情摘要 ×3</span>
+          <span class="chip">前文尾部 2,146 字</span>
+        </div>
+        <div class="ai-body">
+          除非，他不是走错，而是被人引到这条巷子里来的。沈砚舟吹熄了手边的烛火，整个人隐进窗影的暗处。雨声里，他听见第二个人的脚步——轻得像一片贴着地面的叶。<span class="caret"></span>
+        </div>
+      </div></div>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>
