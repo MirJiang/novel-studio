@@ -1,7 +1,7 @@
 # Novel Studio — 项目交接文档（新会话必读）
 
 > 这份文档是项目的"记忆"。任何新会话/新协作者开工前，先读完本文 + `docs/prd.md` + `docs/decisions.md`。
-> 最后更新：2026-08-13（v0.3 完成时）
+> 最后更新：2026-08-15（任务队列 + 图生视频 Seedance）
 
 ## 一句话
 
@@ -31,21 +31,29 @@ src/
   lib/api.ts                  ★ 全部后端调用的唯一入口（架构红线，见下）
   components/
     Caption.tsx               无边框窗口标题栏：品牌 + 面包屑 + 拖拽区 + 最小化/最大化/关闭
-    AppRail.tsx               应用级导航栏（贯穿书架/写作态）：书架/写作/封面/体检 + 视频/发布占位 + 导出/设置
+    AppRail.tsx               应用级导航栏（贯穿书架/写作态）：书架/写作/封面/体检 + 风格库 + 视频/发布/任务 + 导出/设置
     Bookshelf.tsx             书架首页：封面卡片网格（取最新封面，无封面用渐变首字块）+ 新建作品
     Sidebar.tsx               写作态侧栏：章节/设定库双 Tab（二级面板）
     Editor.tsx                写作编辑器：续写/划词浮动条/摘要面板/自动保存
+    BatchWriteDialog.tsx      批量写章弹层：N 章/写完整本书；可最小化后台跑，右下角浮条看进度（状态在 App 层）
     OutlineView.tsx           大纲视图：番茄风简介（AI 生成/手改）+ 分卷大纲（进度管控）
     LoreEditor.tsx            设定词条编辑器（分类/关键词/常驻注入/参考图/自动保存）
-    CoverView.tsx             封面工坊：描述词表单 + 预览 + 历史缩略图
+    CoverView.tsx             封面工坊：描述词表单（可留空，AI 按简介/设定/正文自动总结）+ 预览 + 历史缩略图
     CheckView.tsx             全书体检：摘要覆盖度 + 批量补齐 + 流式报告 + 历史
     VideoView.tsx             视频工坊：口播稿/分镜表/单镜重绘/流水线执行/成片播放
+    StylesView.tsx            风格库（整页全局）：本地 txt/粘贴文本 → 蒸馏风格卡 → 应用到作品
+    PublishView.tsx           发布页：打开番茄后台窗口 + 逐章填充（fill-only，发布人工点）
+    TasksView.tsx             任务面板：队列/进度/取消/重试/清理（批量写章、镜头视频等长任务）
     SettingsView.tsx          设置页（整页非弹窗，左侧分类菜单）：文本模型/封面生图/配音 TTS + 平台账号占位
 src-tauri/src/
   lib.rs                      Tauri 入口：插件注册、DB 初始化、命令注册表
-  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v4）
+  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v9）
   commands.rs                 写作/设定/封面/体检等 #[tauri::command] + prompt 组装 + 注入逻辑
-  commands_video.rs           视频流水线命令：口播稿/分镜/逐镜生图/配音/合成
+  commands_style.rs           风格库命令：LLM 蒸馏风格卡 + CRUD（样本由用户本地上传）
+  commands_publish.rs         番茄发布：第二窗口（独立 cookie 目录）+ eval 注入填充章节
+  commands_video.rs           视频流水线命令：口播稿/分镜/逐镜生图/镜头视频/配音/合成
+  tasks.rs                    任务队列：单 worker 串行执行 + Notify 唤醒 + 入队/取消/重试/清理命令
+  video_gen.rs                火山方舟 Seedance 图生视频客户端（创建任务→10s 轮询→下载落盘）
   llm.rs                      OpenAI 兼容协议客户端：stream_chat（SSE 流式）+ chat_once（非流式）
   image_gen.rs                生图 API（size 参数化）+ ab_glyph 封面排版合成
   video.rs                    火山 TTS 客户端 + ffmpeg/ffprobe 探测与合成（zoompan/concat/ASS 字幕）
@@ -65,7 +73,7 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 2. **任何 AI 输出都要过设定注入**（续写/改写/润色/扩写共用 `build_lore_section`）
 3. **prompt 预算硬顶**：设定 2000 字 / 摘要 1500 字 / 前文尾部 3000 字 / 体检摘要 8000 字 / 大纲 600 字——成本可预测
 4. 注入明细通过 meta 事件对用户可见（崩了能分清"没写设定"还是"没注入"）
-5. 数据库改动走 `user_version` 版本化迁移（当前 v6），禁止直接改老表的 CREATE 语句了事
+5. 数据库改动走 `user_version` 版本化迁移（当前 v9），禁止直接改老表的 CREATE 语句了事
 
 ## 前后端协议
 
@@ -84,27 +92,35 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 
 ### 命令清单（invoke 名 → 作用）
 
-- 作品/章节：`create_project` `list_projects` `rename_project` `delete_project`（级联清磁盘目录）`create_chapter` `list_chapters` `get_chapter` `save_chapter` `delete_chapter` `save_summary`
+- 作品/章节：`create_project(name, description?, targetTotalWords?, targetChapterWords?)` `update_project_targets` `list_projects` `rename_project` `delete_project`（级联清磁盘目录）`create_chapter` `list_chapters` `get_chapter` `save_chapter` `delete_chapter` `save_summary`
 - 设定库：`create_lore_entry` `list_lore_entries` `update_lore_entry` `delete_lore_entry` `set_lore_ref_image`（上传人物卡参考图）`remove_lore_ref_image`
-- 视频：`create_video` `list_videos` `get_video_detail` `delete_video` `save_narration` `update_shot_prompt` `generate_narration`（流式）`generate_storyboard` `generate_shot_image`（单镜重绘）`generate_missing_images`（进度）`synthesize_voices`（进度）`compose_video`（进度）`open_video_folder`
+- 视频：`create_video(project_id, title, chapter_ids, mode?)`（mode: image 静图运镜 / video 图生视频）`generate_shot_video`（单镜重跑）`list_videos` `get_video_detail` `delete_video` `save_narration` `update_shot_prompt` `generate_narration`（流式）`generate_storyboard` `generate_shot_image`（单镜重绘）`generate_missing_images`（进度）`synthesize_voices`（进度）`compose_video`（进度）`open_video_folder`
 - 设置：`get_setting` `set_setting`
 - 导出：`export_project(project_id, path)` → txt
 - 封面：`generate_cover(project_id, prompt, title, author)` → { path, data_url }；`list_covers` `get_cover_data`
 - 体检：`summary_stats` `generate_missing_summaries`（进度事件）`check_consistency`（流式）`save_check_report` `list_check_reports` `get_check_report`
+- 任务队列：`enqueue_batch_chapters` `enqueue_video_shots` `list_tasks` `cancel_task` `retry_task` `clear_finished_tasks`（前端 2s 轮询 tasks 表驱动浮条/toast/章节实时刷新；批量写章参数 count<=0 按全书目标字数推算，逐章落库+自动摘要+收尾推进大纲）
+- 风格库：`distill_style(name, source, sample_text)` `list_styles` `delete_style` `set_project_style(project_id, style_id)`
+- 发布：`open_fanqie_window`（打开/聚焦番茄后台窗口）`fill_chapter_draft(chapter_id)`（填充当前编辑页，只填不发布）
 - AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_draft(idea)`（AI 起书草稿）
 
 ### 设置项 key（settings 表）
 
 - 文本：`llm_base_url`（默认 https://api.deepseek.com/v1）`llm_api_key` `llm_model`（默认 deepseek-chat）
 - 生图：`img_base_url`（默认火山方舟 https://ark.cn-beijing.volces.com/api/v3）`img_api_key` `img_model`（默认 doubao-seedream-4-0-250828）
+- 图生视频：`video_model`（默认 doubao-seedance-1-0-pro-250528），与 img_api_key 同一把方舟 Key（需控制台开通视频模型）
 - 其他：`author_name`（封面作者名记忆）
 - 配音：`tts_app_id` `tts_access_token` `tts_cluster`（默认 volcano_tts）`tts_voice`（火山控制台开通的 voice_type）
-- 视频产物：`%APPDATA%\com.novelstudio.app\videos\<project_id>\<video_id>\`（镜头图/配音/中间件/final.mp4）
+- 视频产物：`%APPDATA%\com.novelstudio.app\videos\<project_id>\<video_id>\`（镜头图/镜头 mp4/配音/中间件/final.mp4）
 
 ## 数据库 schema（v3）
 
 ```sql
-projects(id, name, description/*题材短标签*/, synopsis/*番茄风长简介 v6*/, created_at, updated_at)
+projects(id, name, description/*题材短标签*/, synopsis/*番茄风长简介 v6*/,
+         target_total_words, target_chapter_words/*字数目标 v7，0=未设置*/,
+         style_id/*写作风格 v8，0=不指定*/, created_at, updated_at)
+styles(id, name, source, sample_chars, guide/*风格卡，写作注入*/,
+       example/*示例片段*/, created_at, updated_at)  /* 迁移 v8，全局表 */
 chapters(id, project_id→projects CASCADE, title, content/*HTML*/, summary,
          order_index, word_count, created_at, updated_at)
 lore_entries(id, project_id CASCADE, category, title, content, keywords/*逗号分隔*/,
@@ -113,10 +129,12 @@ settings(key PK, value)
 check_reports(id, project_id CASCADE, content, created_at)
 outline_items(id, project_id CASCADE, title, content, order_index,
               status/*planned/done*/, created_at, updated_at)  /* 迁移 v6，续写时注入 */
-videos(id, project_id CASCADE, title, chapter_ids, narration, status, output_path,
+videos(id, project_id CASCADE, title, chapter_ids, narration, status, mode/*image/video v9*/, output_path,
        error, created_at, updated_at)              /* 迁移 v4 */
 video_shots(id, video_id CASCADE, idx, text, prompt, image_path, audio_path,
-            duration_ms, status, created_at, updated_at)  /* 迁移 v4 */
+            video_path/*图生视频 v9*/, duration_ms, status, created_at, updated_at)  /* 迁移 v4 */
+tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload/*JSON*/,
+      progress_current/total/label, result, error, created_at, updated_at)  /* 迁移 v9 */
 ```
 
 ## 已完成（v0.1~v0.3，全部构建验证通过）
@@ -131,6 +149,7 @@ video_shots(id, video_id CASCADE, idx, text, prompt, image_path, audio_path,
 - 全书体检：设定冲突/时间线/伏笔台账/逻辑漏洞，流式报告 + 存档
 - 界面：无边框窗口（自制 Caption 标题栏）+ 雾白毛玻璃设计系统（index.css @theme，见 D14）
 - 导航三层：AppRail 全局导航栏（新功能加一项，视频/发布已占位）→ 书架首页 ↔ 写作态二级侧栏
+  （封面/体检/视频为整页工坊，不显示写作侧栏）
 - 「写作」导航项记忆最近章节，从封面/体检一键返回工作区
 - 推文视频 v0.4 第一刀：口播稿（流式+设定注入）→ 分镜 JSON → 逐镜生图（可单镜重绘）
   → 火山 TTS 配音 → ffmpeg 合成（静图 zoompan 运镜 + ASS 字幕），视频工坊视图 + 成片播放
@@ -140,11 +159,20 @@ video_shots(id, video_id CASCADE, idx, text, prompt, image_path, audio_path,
   可改可删确认后落库（ai_bootstrap_draft + AICreateWizard.tsx）
 - 作品简介与大纲：侧栏第三 Tab；番茄风简介 AI 生成/手改；分卷大纲节点可编辑可标记完成，
   进度条管控；**大纲注入续写 prompt**（600 字预算，首个未完成节点标 ◀当前）
+- 批量写章：Editor「批量写章」弹层（零章节新书的空状态页也有入口）→ 后端 generate_chapters
+  逐章 chat_once 落库 + 自动摘要（摘要链不断档），可最小化后台跑（右下角浮条 + toast 提醒），可中途取消（已写保留），
+  章节列表随生成实时刷新，收尾时 LLM 按本次摘要自动推进大纲 ◀当前 节点；
+  长任务统一走任务队列（tasks.rs worker + tasks 表 + AppRail「任务」面板）
+  支持按章数或「写完整本书」（按作品目标总字数推算章数）；
+  创建作品（空白/AI 向导）均可设全书目标字数 + 每章字数（projects v7 两列，0=未设置）
+- 写作风格库：AppRail「风格」页，本地 txt/粘贴文本取样本 → LLM 蒸馏风格卡
+  （基调/句式/用词/视角/对话/钩子，≤400 字）→ 创建作品时选用；
+  注入 AI 续写/批量写章/划词三件套的 system prompt（预算 800 字，meta 明细可见"风格：XXX"）
+- 发布到番茄：AppRail「发布」页 → open_fanqie_window 开番茄后台窗口（fanqienovel.com/main/writer/，扫码登录持久化免登）
+  → fill_chapter_draft 把章节填进当前编辑页（fill-only，发布按钮人工点；选择器集中在 commands_publish.rs 顶部）
 
 ## 下一步（v0.4 后续切片）
 
-- 图生视频（可灵/即梦 API）接入，替换静图运镜
-- 任务队列面板（SQLite 任务表 + tokio worker，目前流水线是单次顺序执行）
 - BGM / 片头片尾
 - 视频平台分发生官方 API（抖音/TikTok/YouTube）
 

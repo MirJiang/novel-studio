@@ -45,11 +45,14 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
     if (busy) return;
     setBusy(true);
     setError(null);
+    const autoDescribe = !prompt.trim();
     try {
       await api.setSetting("author_name", author);
       const r = await api.generateCover(projectId, prompt, title, author);
       setSelectedUrl(r.data_url);
       setSelectedPath(r.path);
+      // 自动总结的描述回填到输入框，方便微调后重新生成
+      if (autoDescribe && r.prompt) setPrompt(r.prompt);
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -72,11 +75,14 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
         <label className="mt-5 block">
           <span className="mb-1.5 block text-xs font-medium text-muted">
             画面描述
+            <span className="ml-1.5 font-normal text-faint">
+              留空则根据小说内容自动总结
+            </span>
           </span>
           <textarea
             className="h-32 w-full resize-none rounded-xl bg-white/60 p-2.5 text-sm leading-6 shadow-card outline-none placeholder:text-faint focus:bg-surface"
             placeholder={
-              "例：古风玄幻，少年剑客立于山巅，云海翻腾，远处金色雷霆划破夜空，大气磅礴，暗色调，高质量插画\n\n提示：描述画面元素/风格/色调，不需要写书名文字"
+              "留空：AI 会读作品简介/设定/正文，自动总结画面描述并回填到这里\n\n手填例：古风玄幻，少年剑客立于山巅，云海翻腾，远处金色雷霆划破夜空，大气磅礴，暗色调，高质量插画"
             }
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -107,11 +113,15 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
         </label>
 
         <button
-          disabled={busy || !prompt.trim()}
+          disabled={busy}
           onClick={() => void generate()}
           className="mt-5 w-full rounded-full bg-accent py-2 text-sm font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
         >
-          {busy ? "生成中（约 10~20 秒）…" : "生成封面"}
+          {busy
+            ? prompt.trim()
+              ? "生成中（约 10~20 秒）…"
+              : "先总结描述再出图（约 20~30 秒）…"
+            : "生成封面"}
         </button>
 
         {error && (

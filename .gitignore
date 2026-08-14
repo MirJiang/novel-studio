@@ -8,3 +8,6 @@ src-tauri/binaries/
 
 # 临时文件
 *.tsbuildinfo
+
+# ZCode 工具会话数据
+.zcode/

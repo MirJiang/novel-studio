@@ -1,8 +1,9 @@
 //! Tauri 命令：前端 invoke 的全部入口
 
-use crate::db::{self, Chapter, ChapterMeta, Db, LoreEntry, OutlineItem, Project};
+use crate::db::{self, Chapter, ChapterMeta, Db, LoreEntry, OutlineItem, Project, Task};
 use crate::image_gen::{self, ImageConfig};
 use crate::llm::{self, LlmConfig, StreamEvent};
+use crate::tasks::TaskEnd;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -24,8 +25,29 @@ pub fn create_project(
     db: State<'_, Db>,
     name: String,
     description: Option<String>,
+    target_total_words: Option<i64>,
+    target_chapter_words: Option<i64>,
+    style_id: Option<i64>,
 ) -> Result<Project, String> {
-    db.create_project(&name, description.as_deref().unwrap_or(""))
+    db.create_project(
+        &name,
+        description.as_deref().unwrap_or(""),
+        target_total_words.unwrap_or(0),
+        target_chapter_words.unwrap_or(0),
+        style_id.unwrap_or(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 更新作品字数目标（全书总字数 / 每章字数）
+#[tauri::command]
+pub fn update_project_targets(
+    db: State<'_, Db>,
+    id: i64,
+    target_total_words: i64,
+    target_chapter_words: i64,
+) -> Result<(), String> {
+    db.update_project_targets(id, target_total_words, target_chapter_words)
         .map_err(|e| e.to_string())
 }
 
@@ -274,6 +296,8 @@ pub fn export_project(
 pub struct CoverResult {
     path: String,
     data_url: String,
+    /// 实际使用的画面描述（留空自动总结时回传，前端回填展示）
+    prompt: String,
 }
 
 pub(crate) fn load_image_config(db: &Db) -> ImageConfig {
@@ -312,9 +336,12 @@ pub async fn generate_cover(
     title: String,
     author: String,
 ) -> Result<CoverResult, String> {
-    if prompt.trim().is_empty() {
-        return Err("请先填写封面画面描述".to_string());
-    }
+    // 描述留空：根据书名/题材/简介/首章氛围自动总结画面描述
+    let prompt = if prompt.trim().is_empty() {
+        summarize_cover_prompt(&db, project_id).await?
+    } else {
+        prompt.trim().to_string()
+    };
     let cfg = load_image_config(&db);
     let raw = image_gen::generate_image(&cfg, &prompt, image_gen::COVER_SIZE, &[])
         .await
@@ -332,7 +359,63 @@ pub async fn generate_cover(
     Ok(CoverResult {
         path: path.to_string_lossy().to_string(),
         data_url: format!("data:image/png;base64,{b64}"),
+        prompt,
     })
+}
+
+/// 封面描述留空时：根据作品信息自动总结一段画面描述
+async fn summarize_cover_prompt(db: &Db, project_id: i64) -> Result<String, String> {
+    let cfg = load_llm_config(db);
+    let project = db
+        .list_projects()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| "作品不存在".to_string())?;
+
+    let entries = db.list_lore_entries(project_id).unwrap_or_default();
+    let lore: String = entries
+        .iter()
+        .filter(|e| e.enabled)
+        .map(|e| format!("◆ {}（{}）{}", e.title, e.category, e.content.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lore = head_chars(&lore, 800);
+
+    // 首章开头当氛围参考（新书可能没有正文）
+    let first_chapter = db
+        .list_chapter_bodies(project_id)
+        .ok()
+        .and_then(|b| b.into_iter().next())
+        .map(|(_, c)| head_chars(&crate::db::html_to_text(&c), 600))
+        .unwrap_or_default();
+
+    llm::chat_once(
+        cfg,
+        vec![
+            (
+                "system".to_string(),
+                "你是小说封面设计师，擅长把作品气质翻译成画面。\
+                输出一段 60~100 字的封面画面描述：主体形象/场景、风格（如古风玄幻/都市悬疑）、\
+                色调氛围、构图。画面里不要出现任何文字、字母或水印。\
+                只输出画面描述本身，不要解释。"
+                    .to_string(),
+            ),
+            (
+                "user".to_string(),
+                format!(
+                    "【书名】《{}》\n【题材】{}\n【简介】\n{}\n\n【设定资料】\n{}\n\n【正文氛围】\n{}",
+                    project.name,
+                    if project.description.is_empty() { "（未填）" } else { &project.description },
+                    if project.synopsis.trim().is_empty() { "（暂无）" } else { project.synopsis.trim() },
+                    if lore.is_empty() { "（暂无）" } else { &lore },
+                    if first_chapter.is_empty() { "（暂无正文）" } else { &first_chapter }
+                ),
+            ),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 封面历史（新→旧）
@@ -448,6 +531,33 @@ fn build_summary_section(summaries: &[(String, String)]) -> String {
     picked.join("\n")
 }
 
+/// 风格注入的字符预算
+const MAX_STYLE_CHARS: usize = 800;
+
+/// 作品绑定的写作风格：返回 (风格名, 注入段)；未绑定或风格卡为空时返回 None
+pub(crate) fn style_section(db: &Db, project_id: i64) -> Option<(String, String)> {
+    let project = db
+        .list_projects()
+        .ok()?
+        .into_iter()
+        .find(|p| p.id == project_id)?;
+    if project.style_id <= 0 {
+        return None;
+    }
+    let style = db.get_style(project.style_id).ok()??;
+    let guide = style.guide.trim();
+    if guide.is_empty() {
+        return None;
+    }
+    Some((
+        style.name.clone(),
+        format!(
+            "【写作风格】（正文须模仿以下风格特征）\n{}",
+            head_chars(guide, MAX_STYLE_CHARS)
+        ),
+    ))
+}
+
 /// 大纲注入的字符预算
 const MAX_OUTLINE_CHARS: usize = 600;
 
@@ -506,6 +616,9 @@ pub async fn ai_continue(
     let outline = db.list_outline(chapter.project_id).unwrap_or_default();
     let outline_section = build_outline_section(&outline);
 
+    // 写作风格注入（创建作品时选定的风格卡）
+    let style = style_section(&db, chapter.project_id);
+
     // 把注入明细告知前端（可观测性：崩了能分清是没写设定还是没注入）
     let mut notes = Vec::new();
     notes.push(if injected.is_empty() {
@@ -513,6 +626,9 @@ pub async fn ai_continue(
     } else {
         format!("已注入设定：{}", injected.join("、"))
     });
+    if let Some((name, _)) = &style {
+        notes.push(format!("风格：{name}"));
+    }
     if !summaries.is_empty() {
         notes.push(format!("前情摘要 {} 章", summaries.len()));
     } else if chapter.order_index > 1 {
@@ -525,11 +641,15 @@ pub async fn ai_continue(
         note: notes.join("｜"),
     });
 
-    let system = if lore_section.is_empty() {
+    let mut system = if lore_section.is_empty() {
         SYSTEM_PROMPT.to_string()
     } else {
         format!("{SYSTEM_PROMPT}\n\n【设定资料】（写作时必须严格遵守）\n{lore_section}")
     };
+    if let Some((_, section)) = &style {
+        system.push_str("\n\n");
+        system.push_str(section);
+    }
 
     let summary_block = if summary_section.is_empty() {
         String::new()
@@ -615,11 +735,16 @@ pub async fn ai_transform(
     };
     let _ = channel.send(StreamEvent::Meta { note });
 
-    let system = if lore_section.is_empty() {
+    let style = style_section(&db, chapter.project_id);
+    let mut system = if lore_section.is_empty() {
         TRANSFORM_SYSTEM_PROMPT.to_string()
     } else {
         format!("{TRANSFORM_SYSTEM_PROMPT}\n\n【设定资料】（必须严格遵守）\n{lore_section}")
     };
+    if let Some((_, section)) = &style {
+        system.push_str("\n\n");
+        system.push_str(section);
+    }
 
     let user = format!(
         "【上下文参考】\n{}\n\n【待处理段落】\n{}\n\n【处理要求】\n{}",
@@ -743,6 +868,253 @@ pub async fn generate_missing_summaries(
     });
     let _ = channel.send(ProgressEvent::Done);
     Ok(())
+}
+
+/// 批量写章执行器（任务队列 kind = batch_chapters）。
+///
+/// 与 ai_continue 的关键差异：这里走 chat_once 拿全文直接落库（流式续写不落库，
+/// 文本只在前端编辑器里），每章写完立即生成摘要，保证下一章的前情摘要链不断；
+/// 进度写 tasks 表，前端轮询展示；取消在下一章开始前生效。
+pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, String> {
+    const MAX_BATCH_CHAPTERS: i64 = 50;
+    const DEFAULT_CHAPTER_WORDS: i64 = 2000;
+
+    #[derive(serde::Deserialize)]
+    struct Payload {
+        chapter_count: i64,
+        words_per_chapter: i64,
+    }
+    let payload: Payload = serde_json::from_str(&task.payload)
+        .map_err(|e| format!("任务参数解析失败: {e}"))?;
+    let project_id = task.project_id;
+
+    let project = db
+        .list_projects()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| "作品不存在".to_string())?;
+
+    // 每章字数：参数 > 作品设定 > 默认；钳制在合理区间
+    let mut wpc = if payload.words_per_chapter > 0 {
+        payload.words_per_chapter
+    } else if project.target_chapter_words > 0 {
+        project.target_chapter_words
+    } else {
+        DEFAULT_CHAPTER_WORDS
+    };
+    wpc = wpc.clamp(500, 10000);
+
+    // 章数：参数 <= 0 表示「写完整本书」，按总字数目标推算
+    let mut count = payload.chapter_count;
+    if count <= 0 {
+        if project.target_total_words <= 0 {
+            return Err("还未设置全书目标字数：请先在弹层里填目标字数，或改为按章数生成".to_string());
+        }
+        let written = db.total_word_count(project_id).map_err(|e| e.to_string())?;
+        let remaining = project.target_total_words - written;
+        if remaining <= 0 {
+            return Err(format!(
+                "已达到全书目标字数（{} 字），无需再生成",
+                project.target_total_words
+            ));
+        }
+        count = (remaining + wpc - 1) / wpc;
+    }
+    count = count.clamp(1, MAX_BATCH_CHAPTERS);
+
+    let cfg = load_llm_config(db);
+    let base_count = db.chapter_count(project_id).map_err(|e| e.to_string())?;
+
+    // 本次写成的章节（标题 + 摘要），供收尾时推进大纲
+    let mut written: Vec<(String, String)> = Vec::new();
+    let mut cancelled = false;
+
+    for i in 0..count {
+        // 取消检查：当前章写完后在下一章开始前停下
+        if crate::tasks::is_cancel_requested(task.id) {
+            cancelled = true;
+            break;
+        }
+        let chapter_no = base_count + i + 1;
+        let title = format!("第 {chapter_no} 章");
+        let _ = db.update_task_progress(task.id, i, count, &title);
+
+        // 上文取当前最后一章的尾部（新章节此时还没建，last 就是它的前一章）
+        let prev = db.last_chapter(project_id).map_err(|e| e.to_string())?;
+        let context_tail = prev
+            .as_ref()
+            .map(|c| tail_chars(&db::html_to_text(&c.content), CONTEXT_TAIL_CHARS))
+            .unwrap_or_default();
+
+        // 设定注入：关键词匹配上下文 + 作品简介（第一章时上文为空，简介也能触发关键词）
+        let entries = db.list_lore_entries(project_id).unwrap_or_default();
+        let lore_match_context = format!("{context_tail}\n{}", project.synopsis);
+        let (lore_section, _injected) = build_lore_section(&entries, &lore_match_context);
+
+        // 前情摘要 + 大纲（与 ai_continue 同一套注入链）
+        let next_order = prev.as_ref().map(|c| c.order_index + 1).unwrap_or(1);
+        let summaries = db
+            .list_summaries_before(project_id, next_order)
+            .unwrap_or_default();
+        let summary_section = build_summary_section(&summaries);
+        let outline = db.list_outline(project_id).unwrap_or_default();
+        let outline_section = build_outline_section(&outline);
+
+        let style = style_section(db, project_id);
+        let mut system = if lore_section.is_empty() {
+            SYSTEM_PROMPT.to_string()
+        } else {
+            format!("{SYSTEM_PROMPT}\n\n【设定资料】（写作时必须严格遵守）\n{lore_section}")
+        };
+        if let Some((_, section)) = &style {
+            system.push_str("\n\n");
+            system.push_str(section);
+        }
+        let summary_block = if summary_section.is_empty() {
+            String::new()
+        } else {
+            format!("【前情摘要】\n{summary_section}\n\n")
+        };
+        let outline_block = if outline_section.is_empty() {
+            String::new()
+        } else {
+            format!("【全书大纲】（写作时遵循当前进度节点的走向）\n{outline_section}\n")
+        };
+        // 全新书的第一章没有前文，用作品简介给 AI 定调
+        let prev_block = if context_tail.trim().is_empty() {
+            if project.synopsis.trim().is_empty() {
+                "【前文】\n（这是一个新章节的开头，请直接开始创作）".to_string()
+            } else {
+                format!("【作品简介】\n{}\n\n【前文】\n（这是全书第一章，请依据简介直接开始创作）", project.synopsis.trim())
+            }
+        } else {
+            format!("【前文】\n{context_tail}")
+        };
+        let user = format!(
+            "{summary_block}{outline_block}{prev_block}\n\n【本章要求】\n本章为《{title}》。\
+            自然衔接上文，直接创作本章完整正文，篇幅约 {wpc} 字，结尾可留悬念。"
+        );
+
+        let text = llm::chat_once(
+            cfg.clone(),
+            vec![
+                ("system".to_string(), system),
+                ("user".to_string(), user),
+            ],
+        )
+        .await
+        .map_err(|e| format!("《{title}》生成失败（已完成 {i} 章）: {e}"))?;
+
+        let chapter = db
+            .create_chapter(project_id, &title)
+            .map_err(|e| e.to_string())?;
+        db.save_chapter(chapter.id, &title, &text_to_html(&text))
+            .map_err(|e| format!("《{title}》保存失败（已完成 {i} 章）: {e}"))?;
+
+        // 立即生成摘要，保证下一章的前情摘要链不断；失败不中断（后续可批量补齐）
+        let plain = db::html_to_text(&text_to_html(&text));
+        let summary = summarize_chapter_text(&cfg, &title, &plain)
+            .await
+            .unwrap_or_default();
+        if !summary.is_empty() {
+            let _ = db.save_summary(chapter.id, &summary);
+        }
+        written.push((title.clone(), summary));
+    }
+
+    // 大纲自动推进：让 LLM 判断本次内容覆盖到第几个节点，标 done（失败静默跳过）
+    if !written.is_empty() {
+        let _ = db.update_task_progress(task.id, written.len() as i64, count, "推进大纲…");
+        advance_outline(db, &cfg, project_id, &written).await;
+    }
+
+    let done_count = written.len() as i64;
+    let _ = db.update_task_progress(
+        task.id,
+        done_count,
+        count,
+        if cancelled { "已取消" } else { "完成" },
+    );
+    let msg = format!("新增 {done_count} 章");
+    if cancelled {
+        Ok(TaskEnd::Cancelled(format!("{msg}（已取消）")))
+    } else {
+        Ok(TaskEnd::Done(msg))
+    }
+}
+
+/// 批量写完后的收尾：把本次覆盖到的大纲节点标为完成。
+/// 章节数和大纲节点粒度不一致，交由 LLM 按摘要判断推进到第几节。
+async fn advance_outline(db: &Db, cfg: &LlmConfig, project_id: i64, written: &[(String, String)]) {
+    let items = db.list_outline(project_id).unwrap_or_default();
+    if items.is_empty() || !items.iter().any(|i| i.status != "done") {
+        return;
+    }
+    let outline_text = items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| {
+            format!(
+                "{}. {}{}",
+                i + 1,
+                it.title,
+                if it.status == "done" { "【已完成】" } else { "" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let chapters_text = written
+        .iter()
+        .map(|(t, s)| format!("《{t}》{s}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let resp = llm::chat_once(
+        cfg.clone(),
+        vec![
+            (
+                "system".to_string(),
+                "你是小说大纲管理助手。根据本次新写的章节摘要，判断大纲推进到了第几个节点。\
+                只输出一个阿拉伯数字（推进到的节点序号），不要输出任何其他内容。\
+                如果没有明显推进就输出 0。"
+                    .to_string(),
+            ),
+            (
+                "user".to_string(),
+                format!("【全书大纲】\n{outline_text}\n\n【本次新写章节】\n{chapters_text}\n\n问：本次内容推进到了第几个大纲节点？"),
+            ),
+        ],
+    )
+    .await;
+
+    let Ok(text) = resp else { return };
+    let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
+    let Ok(n) = digits.parse::<usize>() else { return };
+    if n == 0 {
+        return;
+    }
+    for (idx, it) in items.iter().enumerate() {
+        if idx + 1 <= n && it.status != "done" {
+            let _ = db.set_outline_status(it.id, "done");
+        }
+    }
+}
+
+/// LLM 输出的纯文本转章节 HTML：按行分段，空行跳过，转义实体
+fn text_to_html(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let escaped = l
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            format!("<p>{escaped}</p>")
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 /// (总章节数, 已有摘要数)

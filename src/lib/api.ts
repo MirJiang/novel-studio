@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BootstrapDraft, Chapter, ChapterMeta, CheckReportMeta, LoreEntry, OutlineItem, Project, Video, VideoDetail } from "../types";
+import type { BootstrapDraft, Chapter, ChapterMeta, CheckReportMeta, LoreEntry, OutlineItem, Project, Style, Task, Video, VideoDetail } from "../types";
 
 /** 无边框窗口的自制标题栏控制 */
 const appWindow = getCurrentWindow();
@@ -22,6 +22,8 @@ export type ProgressEvent =
 export interface CoverResult {
   path: string;
   data_url: string;
+  /** 实际使用的画面描述（留空自动总结时回传） */
+  prompt: string;
 }
 
 /**
@@ -34,8 +36,36 @@ export const api = {
   winToggleMaximize: () => appWindow.toggleMaximize().catch(console.error),
   winClose: () => appWindow.close().catch(console.error),
 
-  createProject: (name: string, description?: string) =>
-    invoke<Project>("create_project", { name, description: description ?? null }),
+  createProject: (
+    name: string,
+    description?: string,
+    targetTotalWords?: number,
+    targetChapterWords?: number,
+    styleId?: number,
+  ) =>
+    invoke<Project>("create_project", {
+      name,
+      description: description ?? null,
+      targetTotalWords: targetTotalWords ?? null,
+      targetChapterWords: targetChapterWords ?? null,
+      styleId: styleId ?? null,
+    }),
+
+  /** 给作品指定/清除写作风格（styleId = 0 清除） */
+  setProjectStyle: (projectId: number, styleId: number) =>
+    invoke<void>("set_project_style", { projectId, styleId }),
+
+  /** 更新作品字数目标（全书总字数 / 每章字数） */
+  updateProjectTargets: (
+    id: number,
+    targetTotalWords: number,
+    targetChapterWords: number,
+  ) =>
+    invoke<void>("update_project_targets", {
+      id,
+      targetTotalWords,
+      targetChapterWords,
+    }),
 
   listProjects: () => invoke<Project[]>("list_projects"),
 
@@ -150,6 +180,38 @@ export const api = {
     return invoke<void>("generate_missing_summaries", { projectId, channel });
   },
 
+  // ---------- 任务队列（长任务统一入队，前端轮询展示） ----------
+
+  /**
+   * 批量写章入队：从全书最后一章往后连续创作，逐章落库 + 自动摘要 + 收尾推进大纲。
+   * chapterCount <= 0 表示「写完整本书」（按作品目标总字数推算章数）；
+   * wordsPerChapter <= 0 时用作品设定的每章字数。
+   */
+  enqueueBatchChapters: (
+    projectId: number,
+    chapterCount: number,
+    wordsPerChapter: number
+  ) =>
+    invoke<Task>("enqueue_batch_chapters", {
+      projectId,
+      chapterCount,
+      wordsPerChapter,
+    }),
+
+  /** 镜头图生视频入队（跳过已有视频的镜头） */
+  enqueueVideoShots: (videoId: number) =>
+    invoke<Task>("enqueue_video_shots", { videoId }),
+
+  listTasks: () => invoke<Task[]>("list_tasks"),
+
+  /** 取消任务：pending 直接取消，running 在当前步骤完成后停 */
+  cancelTask: (id: number) => invoke<void>("cancel_task", { id }),
+
+  /** 失败/取消的任务按原参数重新入队 */
+  retryTask: (id: number) => invoke<Task>("retry_task", { id }),
+
+  clearFinishedTasks: () => invoke<void>("clear_finished_tasks"),
+
   /** 全书一致性体检（流式输出报告） */
   checkConsistency: (
     projectId: number,
@@ -209,8 +271,18 @@ export const api = {
 
   // ---------- 推文视频 ----------
 
-  createVideo: (projectId: number, title: string, chapterIds: number[]) =>
-    invoke<Video>("create_video", { projectId, title, chapterIds }),
+  createVideo: (
+    projectId: number,
+    title: string,
+    chapterIds: number[],
+    mode?: "image" | "video"
+  ) =>
+    invoke<Video>("create_video", {
+      projectId,
+      title,
+      chapterIds,
+      mode: mode ?? null,
+    }),
 
   listVideos: (projectId: number) =>
     invoke<Video[]>("list_videos", { projectId }),
@@ -243,6 +315,10 @@ export const api = {
   generateShotImage: (shotId: number) =>
     invoke<string>("generate_shot_image", { shotId }),
 
+  /** 单镜图生视频/重跑（约 1~2 分钟） */
+  generateShotVideo: (shotId: number) =>
+    invoke<void>("generate_shot_video", { shotId }),
+
   generateMissingImages: (
     videoId: number,
     onEvent: (event: ProgressEvent) => void
@@ -272,6 +348,25 @@ export const api = {
 
   openVideoFolder: (videoId: number) =>
     invoke<void>("open_video_folder", { videoId }),
+
+  // ---------- 写作风格 ----------
+
+  /** 蒸馏风格：样本文本 → LLM 风格卡 → 入库 */
+  distillStyle: (name: string, source: string, sampleText: string) =>
+    invoke<Style>("distill_style", { name, source, sampleText }),
+
+  listStyles: () => invoke<Style[]>("list_styles"),
+
+  deleteStyle: (id: number) => invoke<void>("delete_style", { id }),
+
+  // ---------- 发布（番茄作家后台，fill-only） ----------
+
+  /** 打开/聚焦番茄作家后台窗口（首次需扫码登录） */
+  openFanqieWindow: () => invoke<void>("open_fanqie_window"),
+
+  /** 把章节填进后台当前编辑页（只填不发布），返回结果说明 */
+  fillChapterDraft: (chapterId: number) =>
+    invoke<string>("fill_chapter_draft", { chapterId }),
 
   /** AI 起书：一句话创意 → 书名/简介/初始设定草稿 */
   aiBootstrapDraft: (idea: string) =>

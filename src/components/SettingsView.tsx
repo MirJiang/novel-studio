@@ -41,8 +41,8 @@ const SECTIONS: SectionDef[] = [
   {
     id: "img",
     label: "封面生图",
-    title: "封面生图",
-    hint: "兼容 OpenAI Images 协议，推荐火山方舟 Seedream（即梦）。分镜配图也用这组配置",
+    title: "封面生图 / 图生视频",
+    hint: "兼容 OpenAI Images 协议，推荐火山方舟 Seedream（即梦）。分镜配图也用这组配置；图生视频复用同一把 Key，需在方舟控制台开通 Seedance 视频模型",
     fields: [
       {
         key: "img_base_url",
@@ -53,8 +53,14 @@ const SECTIONS: SectionDef[] = [
       { key: "img_api_key", label: "API Key", placeholder: "ARK API Key", secret: true },
       {
         key: "img_model",
-        label: "模型",
+        label: "生图模型",
         placeholder: "doubao-seedream-4-0-250828",
+        secret: false,
+      },
+      {
+        key: "video_model",
+        label: "视频模型（图生视频）",
+        placeholder: "doubao-seedance-1-0-pro-250528",
         secret: false,
       },
     ],

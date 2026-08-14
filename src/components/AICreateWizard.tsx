@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import type { BootstrapDraft } from "../types";
+import type { BootstrapDraft, Style } from "../types";
 
 interface AICreateWizardProps {
   onCancel: () => void;
@@ -17,6 +17,11 @@ export function AICreateWizard({ onCancel, onCreate }: AICreateWizardProps) {
   const [polishBusy, setPolishBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<BootstrapDraft | null>(null);
+  const [styles, setStyles] = useState<Style[]>([]);
+
+  useEffect(() => {
+    void api.listStyles().then(setStyles).catch(console.error);
+  }, []);
 
   const generate = async () => {
     if (busy || idea.trim().length === 0) return;
@@ -116,6 +121,56 @@ export function AICreateWizard({ onCancel, onCreate }: AICreateWizardProps) {
               value={draft.synopsis}
               onChange={(e) => setDraft({ ...draft, synopsis: e.target.value })}
             />
+            <span className="text-xs text-muted">字数目标</span>
+            <div className="flex items-center gap-2">
+              <input
+                className="w-36 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
+                placeholder="全书，如 200000"
+                inputMode="numeric"
+                value={draft.target_total_words || ""}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    target_total_words: parseInt(e.target.value, 10) || undefined,
+                  })
+                }
+              />
+              <input
+                className="w-36 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
+                placeholder="每章，如 2000"
+                inputMode="numeric"
+                value={draft.target_chapter_words || ""}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    target_chapter_words: parseInt(e.target.value, 10) || undefined,
+                  })
+                }
+              />
+              <span className="text-[11px] text-faint">可选</span>
+            </div>
+            {styles.length > 0 && (
+              <>
+                <span className="text-xs text-muted">写作风格</span>
+                <select
+                  className="w-64 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none focus:bg-surface2"
+                  value={draft.style_id ?? 0}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      style_id: parseInt(e.target.value, 10) || undefined,
+                    })
+                  }
+                >
+                  <option value={0}>不指定（默认风格）</option>
+                  {styles.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
           </div>
 
           <p className="mt-5 mb-2 text-xs font-semibold text-muted">

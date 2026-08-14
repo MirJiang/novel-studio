@@ -5,6 +5,28 @@ export interface Project {
   description: string;
   /** 番茄风长简介 */
   synopsis: string;
+  /** 全书目标字数（0 = 未设置），「写完整本书」按它推算章数 */
+  target_total_words: number;
+  /** 每章目标字数（0 = 未设置），批量生成的默认每章篇幅 */
+  target_chapter_words: number;
+  /** 写作风格（0 = 不指定），对应 styles 表 */
+  style_id: number;
+  created_at: number;
+  updated_at: number;
+}
+
+/** 写作风格（蒸馏自参考书籍样本，全局复用） */
+export interface Style {
+  id: number;
+  name: string;
+  /** 来源说明（书名 / 文件名） */
+  source: string;
+  /** 样本字数 */
+  sample_chars: number;
+  /** 蒸馏出的风格卡（写作时注入 prompt） */
+  guide: string;
+  /** 代表性示例片段 */
+  example: string;
   created_at: number;
   updated_at: number;
 }
@@ -67,6 +89,12 @@ export interface BootstrapDraft {
   description: string;
   /** 番茄风长简介 */
   synopsis: string;
+  /** 全书目标字数（可选，0/undefined = 不设置） */
+  target_total_words?: number;
+  /** 每章目标字数（可选） */
+  target_chapter_words?: number;
+  /** 写作风格 id（可选，0/undefined = 不指定） */
+  style_id?: number;
   lore: BootstrapLore[];
 }
 
@@ -98,8 +126,10 @@ export interface Video {
   title: string;
   chapter_ids: string;
   narration: string;
-  /** draft → storyboarded → imaging → imaged → voicing → voiced → composing → done / error */
+  /** draft → storyboarded → imaging → imaged → voicing → voiced → composing → done / error；video 模式多出 videoing → videoed */
   status: string;
+  /** image = 静图运镜（默认）/ video = 图生视频（Seedance 按量计费） */
+  mode: string;
   output_path: string;
   error: string;
   created_at: number;
@@ -115,6 +145,8 @@ export interface VideoShot {
   prompt: string;
   image_path: string;
   audio_path: string;
+  /** 图生视频产物路径（空 = 未生成） */
+  video_path: string;
   duration_ms: number;
   status: string;
   created_at: number;
@@ -124,4 +156,23 @@ export interface VideoShot {
 export interface VideoDetail {
   video: Video;
   shots: VideoShot[];
+}
+
+/** 任务队列条目（批量写章 / 镜头图生视频） */
+export interface Task {
+  id: number;
+  project_id: number;
+  /** batch_chapters / video_shots */
+  kind: string;
+  label: string;
+  /** pending / running / done / error / cancelled */
+  status: string;
+  payload: string;
+  progress_current: number;
+  progress_total: number;
+  progress_label: string;
+  result: string;
+  error: string;
+  created_at: number;
+  updated_at: number;
 }

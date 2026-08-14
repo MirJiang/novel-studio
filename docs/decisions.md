@@ -129,3 +129,79 @@
 - 视频预览走 asset 协议（tauri.conf assetProtocol scope $APPDATA/videos/**），不转 data URL
 - 表：videos + video_shots（迁移 v4），status 状态机 draft→…→done/error
 - 图生视频（可灵/即梦）与任务队列面板留待下一切片；镜头表已为此留好结构
+
+## D17. 批量写章：后端 chat_once 逐章落库，不走流式编辑器
+
+- ai_continue 的流式 delta 不落库（文本只到前端编辑器，靠防抖保存），后端拿不到全文，
+  无法支撑"连续写 N 章"——批量生成必须换一种生成方式
+- 新增 generate_chapters 命令：循环里 chat_once 拿整章全文 → text_to_html 转段落 →
+  db.save_chapter 落库（word_count 自动更新）→ 立即 summarize_chapter_text 生成摘要，
+  保证下一章的前情摘要链不断；摘要失败不中断，正文失败即中断（已写章节保留）
+- 注入链与 ai_continue 完全一致（设定/前情摘要/大纲 ◀当前）；全新书第一章无上文时
+  改注入作品简介定调；chat_once 显式 max_tokens=8192 防长章被截
+- 「写完整本书」= 按作品 target_total_words 推算剩余章数（projects 表 v7 迁移加
+  target_total_words / target_chapter_words 两列，0=未设置）；单次上限 50 章，
+  每章字数钳制 500~10000
+- 弹层（BatchWriteDialog）挂在 App 层而非 Editor 内：Editor 按 key 重挂载，
+  弹层放里面切章节会丢进度；进度条复用批量摘要的 ProgressEvent 模式
+- 章标题自动编号"第 N 章"，可事后改
+  （补充 2）任务可取消：BatchState（running+cancel 两个 HashSet），循环在下一章开始前
+  检查取消标记；已写章节保留，ProgressEvent 加 Cancelled{completed} 变体
+  （补充 3）大纲自动推进：批量收尾时把本次各章摘要 + 大纲节点喂给 LLM，问"推进到第几节"，
+  把对应 planned 节点标 done（章节数与节点粒度不一致，不做 1:1 硬映射）
+  （补充）批量状态提升 App 层 + 悬浮进度条：生成中弹层可最小化（「后台运行」按钮/✕），
+  右下角浮条实时显示进度、点击重新打开；完成/中断走 toast。后端 HashSet 防重入，
+  同一作品同时只允许一个批量任务
+
+## D18. 写作风格库：样本蒸馏风格卡，注入正文写作三件套
+
+- 风格 = 全局资源（styles 表，v8），作品用 style_id 单选关联；删除风格自动解绑作品
+- ~~样本三来源：联网搜书/粘贴链接/本地文本~~ → 联网搜书与链接抓取已下线（通用抓取太脆，
+  且下载他站内容有版权争议），只保留本地 txt/粘贴文本——样本来源干净，行为可预期
+- 蒸馏：样本头 6000+中 3000+尾 3000（风格贯穿全文，只看开头以偏概全）→ LLM 出六节风格卡
+  （≤400 字）；示例片段程序截取，不让 LLM 引用原文（防幻觉）
+- 注入点只有 ai_continue / ai_transform / generate_chapters 的 system prompt（800 字预算）；
+  简介/大纲/起书不带风格——那是营销向文本，强风格适得其反
+- 合规：UI 明示样本仅本地分析用，建议公版/免费授权作品；样本不落盘只进 LLM 和 DB
+
+## D19. 番茄发布：Tauri 第二窗口 + eval 注入，fill-only 半自动
+
+- 番茄作家后台无公开 API，社区（hchcx/rockbenben/amm10090）全走 Playwright 浏览器自动化；
+  我们用 Tauri WebviewWindow 代替 Playwright——零新增重依赖，包体不变
+- ~~窗口用独立 data_directory 隔离 cookie~~ → 实测自定义数据目录导致 WebView2 黑屏，
+  已改回默认目录（登录态照常持久化）。番茄后台正确地址是主域路径
+  fanqienovel.com/main/writer/（writer.fanqienovel.com 子域不存在）
+- 命令必须 async：同步命令跑主线程，里面 sleep 会冻结事件循环、eval 永远排不上队（卡死）
+- fill-only 原则（参考 amm10090 的 --fill-only）：程序只把章节标题/正文填进编辑页，
+  发布/存草稿按钮永远人工点——平台对 AI 内容有申报机制，账号风险必须由人确认
+- eval 无返回值，结果回传走 location.hash 通道（脚本 history.replaceState 写
+  #nsfill={json} → Rust 读 w.url() 解析 → 2.5 秒后清掉 hash）。
+  注意 wry 不会把 document.title 同步到原生窗口标题（显式 set 过 title 后），标题通道不可用
+- 后台 DOM 选择器集中在 commands_publish.rs 顶部 FILL_SCRIPT 候选表，改版只改一处；
+  React 受控输入框要走原生 value setter + input 事件才生效
+- 不做：定时排期/多账号/每日上限检测（rockbenben 有实现，需要时再切片）
+
+## D20. 任务队列：tasks 表 + 单 worker 串行，前端 2s 轮询
+
+- 长任务（批量写章、镜头图生视频…）统一入队：tasks 表记录状态/进度/结果，
+  worker 在 setup 里 tokio::spawn，Notify 唤醒，串行取 pending 执行
+- Db 改 Arc<Mutex<Connection>> + Clone，worker 与命令共享连接
+- 执行器签名 (AppHandle, &Db, &Task) -> Result<TaskEnd, String>（Done/Cancelled）；
+  进度直接写 tasks 表（update_task_progress），不再走 Channel——
+  前端 App 层 2s 轮询 + 状态跃迁检测（toast/章节实时刷新），页面刷新不丢进度
+- 取消两级：pending 直接标 cancelled；running 置内存取消标志，执行器在检查点停
+- 串行而非并发：LLM/生图/视频都是按量计费，串行天然限流；同类任务同作品防重复入队
+- 批量写章的 Channel 版 generate_chapters 命令退役（前端改入队 + 轮询）
+
+## D21. 图生视频：方舟 Seedance 首帧模式，复用生图 Key
+
+- 模型 doubao-seedance-1-0-pro-250528（settings 的 video_model 可换），
+  鉴权复用 img_base_url/img_api_key——不引入即梦（AK/SK 签名那套不值得）
+- 异步任务：POST /contents/generations/tasks → 10s 轮询（15 分钟超时）→
+  video_url 仅 24h 有效，拿到立即下载落盘（shot-{id}.mp4）
+- 参数走提示词后缀（--resolution 1080p --ratio 9:16 --dur 5），官方 demo 同款
+- 整批生成走任务队列（kind=video_shots，跳过已有视频的镜头，失败重试续跑）；
+  单镜重跑用独立命令 generate_shot_video（不经队列）
+- 合成：镜头有 video_path 就 -stream_loop 循环对齐配音时长再 concat（不再 zoompan），
+  混跑兼容——静图镜头仍走老路
+- 模式按视频任务选择（videos.mode：image 免费静图 / video 计费），默认静图防误触费钱

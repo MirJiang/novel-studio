@@ -3,15 +3,24 @@ interface AppRailProps {
   onShelf: boolean;
   /** 是否已打开作品（决定书籍相关项是否可用） */
   hasProject: boolean;
-  /** 当前主视图（写作=章节/设定，封面，体检，视频） */
-  activeView: "write" | "cover" | "check" | "video" | null;
+  /** 当前主视图（写作=章节/设定，封面，体检，视频，发布） */
+  activeView: "write" | "cover" | "check" | "video" | "publish" | null;
   /** 设置页是否打开 */
   settingsActive?: boolean;
+  /** 风格库页是否打开 */
+  stylesActive?: boolean;
+  /** 任务面板是否打开 */
+  tasksActive?: boolean;
+  /** 有进行中/排队任务（显示蓝点） */
+  tasksRunning?: boolean;
   onGoShelf: () => void;
   onGoWrite: () => void;
   onGoCover: () => void;
   onGoCheck: () => void;
   onGoVideo: () => void;
+  onGoPublish: () => void;
+  onGoTasks: () => void;
+  onGoStyles: () => void;
   onExport: () => void;
   onOpenSettings: () => void;
 }
@@ -71,6 +80,18 @@ export function AppRail(props: AppRailProps) {
         }
       />
 
+      <RailItem
+        label="风格"
+        active={props.stylesActive}
+        onClick={props.onGoStyles}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 4V2M15 12v-2M11.5 8h-2M20.5 8h-2M17.8 5.2l-1.4 1.4M17.8 10.8l-1.4-1.4M12.2 5.2l1.4 1.4M12.2 10.8l1.4-1.4" />
+            <path d="M3 21l8.5-8.5" />
+          </svg>
+        }
+      />
+
       <div className="my-1 h-px w-7 bg-black/8" />
 
       <RailItem
@@ -86,16 +107,28 @@ export function AppRail(props: AppRailProps) {
         }
       />
 
-      {/* 规划中：v0.5 */}
       <RailItem
         label="发布"
-        disabled
-        soon
-        onClick={() => {}}
+        disabled={!book}
+        active={!props.onShelf && props.activeView === "publish"}
+        onClick={props.onGoPublish}
         icon={
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
             <path d="M22 2 11 13" />
             <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+          </svg>
+        }
+      />
+
+      <RailItem
+        label="任务"
+        active={props.tasksActive}
+        badge={props.tasksRunning}
+        onClick={props.onGoTasks}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 6h12M9 12h12M9 18h12" />
+            <path d="M4 5l1 1 2-2M4 11l1 1 2-2M4 17l1 1 2-2" />
           </svg>
         }
       />
@@ -135,6 +168,7 @@ function RailItem({
   active,
   disabled,
   soon,
+  badge,
   onClick,
 }: {
   label: string;
@@ -143,6 +177,8 @@ function RailItem({
   disabled?: boolean;
   /** 规划中标记 */
   soon?: boolean;
+  /** 有进行中任务的蓝点 */
+  badge?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -162,6 +198,9 @@ function RailItem({
       <span className="text-[10px] leading-none">{label}</span>
       {soon && (
         <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-faint" />
+      )}
+      {badge && (
+        <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent" />
       )}
     </button>
   );

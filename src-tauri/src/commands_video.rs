@@ -6,10 +6,12 @@
 //! - 第一刀镜头为"静图 + 运镜"，图生视频 API 后续切片
 
 use crate::commands::{build_lore_section, load_image_config, load_llm_config, ProgressEvent};
-use crate::db::{Db, Video, VideoShot};
+use crate::db::{Db, Task, Video, VideoShot};
 use crate::image_gen;
 use crate::llm::{self, StreamEvent};
+use crate::tasks::TaskEnd;
 use crate::video::{self, ComposeShot, TtsConfig};
+use crate::video_gen::{self, VideoGenConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use base64::Engine;
@@ -63,16 +65,21 @@ pub fn create_video(
     project_id: i64,
     title: String,
     chapter_ids: Vec<i64>,
+    mode: Option<String>,
 ) -> Result<Video, String> {
     if chapter_ids.is_empty() {
         return Err("请先选择取材章节".to_string());
+    }
+    let mode = mode.unwrap_or_else(|| "image".to_string());
+    if mode != "image" && mode != "video" {
+        return Err(format!("未知的视频模式: {mode}"));
     }
     let ids = chapter_ids
         .iter()
         .map(|i| i.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    db.create_video(project_id, &title, &ids)
+    db.create_video(project_id, &title, &ids, &mode)
         .map_err(|e| e.to_string())
 }
 
@@ -364,6 +371,105 @@ pub async fn generate_missing_images(
     Ok(())
 }
 
+// ---------- 第三步半：镜头图生视频（Seedance，按量计费；仅 mode=video 的任务用） ----------
+
+fn load_video_gen_config(db: &Db) -> VideoGenConfig {
+    let read = |key: &str, default: &str| {
+        db.get_setting(key)
+            .ok()
+            .flatten()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| default.to_string())
+    };
+    VideoGenConfig {
+        base_url: read("img_base_url", "https://ark.cn-beijing.volces.com/api/v3"),
+        api_key: read("img_api_key", ""),
+        model: read("video_model", "doubao-seedance-1-0-pro-250528"),
+    }
+}
+
+async fn gen_one_shot_video(
+    app: &AppHandle,
+    db: &Db,
+    cfg: &VideoGenConfig,
+    shot: &VideoShot,
+) -> Result<(), String> {
+    if shot.image_path.is_empty() {
+        return Err(format!("镜头 {} 还没有配图，先生成镜头图", shot.idx));
+    }
+    let video = db.get_video(shot.video_id).map_err(|e| e.to_string())?;
+    let out = videos_dir(app, &video)?.join(format!("shot-{}.mp4", shot.id));
+    video_gen::generate_from_first_frame(
+        cfg,
+        &shot.prompt,
+        &std::path::PathBuf::from(&shot.image_path),
+        &out,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    db.set_shot_video(shot.id, &out.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 单镜重跑视频（直接执行；一镜约 1~2 分钟）
+#[tauri::command]
+pub async fn generate_shot_video(
+    app: AppHandle,
+    db: State<'_, Db>,
+    shot_id: i64,
+) -> Result<(), String> {
+    let shot = db.get_shot(shot_id).map_err(|e| e.to_string())?;
+    let cfg = load_video_gen_config(&db);
+    gen_one_shot_video(&app, &db, &cfg, &shot).await
+}
+
+/// 镜头视频批量生成执行器（任务队列 kind = video_shots）
+pub(crate) async fn run_video_shots(
+    app: &AppHandle,
+    db: &Db,
+    task: &Task,
+) -> Result<TaskEnd, String> {
+    #[derive(Deserialize)]
+    struct Payload {
+        video_id: i64,
+    }
+    let payload: Payload = serde_json::from_str(&task.payload)
+        .map_err(|e| format!("任务参数解析失败: {e}"))?;
+
+    let video = db.get_video(payload.video_id).map_err(|e| e.to_string())?;
+    let pending: Vec<VideoShot> = db
+        .list_shots(video.id)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|s| !s.image_path.is_empty() && s.video_path.is_empty())
+        .collect();
+    if pending.is_empty() {
+        return Ok(TaskEnd::Done("所有镜头已有视频".to_string()));
+    }
+    let total = pending.len() as i64;
+    let cfg = load_video_gen_config(db);
+    db.set_video_status(video.id, "videoing", "").ok();
+
+    let mut done = 0i64;
+    for shot in &pending {
+        if crate::tasks::is_cancel_requested(task.id) {
+            return Ok(TaskEnd::Cancelled(format!(
+                "镜头视频 ×{done}/{total}（已取消，已生成的保留）"
+            )));
+        }
+        let _ = db.update_task_progress(task.id, done, total, &format!("镜头 {}", shot.idx));
+        if let Err(e) = gen_one_shot_video(app, db, &cfg, shot).await {
+            let msg = format!("镜头 {} 视频生成失败: {e}", shot.idx);
+            db.set_video_status(video.id, "error", &msg).ok();
+            return Err(format!("{msg}（已生成 {done} 镜，重试会跳过已完成镜头）"));
+        }
+        done += 1;
+    }
+    db.set_video_status(video.id, "videoed", "").ok();
+    Ok(TaskEnd::Done(format!("镜头视频 ×{done}")))
+}
+
 // ---------- 第四步：配音 ----------
 
 async fn synth_one_voice(
@@ -459,6 +565,11 @@ pub async fn compose_video(
         .map(|s| ComposeShot {
             image: PathBuf::from(&s.image_path),
             audio: PathBuf::from(&s.audio_path),
+            video: if s.video_path.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(&s.video_path))
+            },
             duration_ms: s.duration_ms,
             text: s.text.clone(),
         })

@@ -32,6 +32,9 @@ struct ChatRequest {
     messages: Vec<ChatMessage>,
     stream: bool,
     temperature: f32,
+    /// 输出上限；None 时字段不下发（各家默认值不同）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -80,6 +83,7 @@ pub async fn stream_chat(
             .collect(),
         stream: true,
         temperature: 0.8,
+        max_tokens: None,
     };
 
     let client = reqwest::Client::new();
@@ -186,6 +190,8 @@ pub async fn chat_once(cfg: LlmConfig, messages: Vec<(String, String)>) -> Resul
             .collect(),
         stream: false,
         temperature: 0.3,
+        // 批量写章等非流式场景要拿完整长文，显式放宽输出上限（DeepSeek 上限 8192）
+        max_tokens: Some(8192),
     };
     let resp = reqwest::Client::new()
         .post(&url)

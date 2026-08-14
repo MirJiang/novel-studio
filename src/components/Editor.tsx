@@ -9,6 +9,8 @@ interface EditorProps {
   chapter: Chapter;
   /** 保存成功后通知父组件（刷新侧栏字数等） */
   onSaved: () => void;
+  /** 打开批量写章弹层（App 层挂载，切章节不丢进度） */
+  onOpenBatchWrite: () => void;
 }
 
 interface SelInfo {
@@ -38,7 +40,7 @@ function makeInserter(ed: TiptapEditor, startPos: number) {
   };
 }
 
-export function Editor({ chapter, onSaved }: EditorProps) {
+export function Editor({ chapter, onSaved, onOpenBatchWrite }: EditorProps) {
   const [title, setTitle] = useState(chapter.title);
   const titleRef = useRef(title);
   titleRef.current = title;
@@ -270,6 +272,14 @@ export function Editor({ chapter, onSaved }: EditorProps) {
           className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
         >
           {aiBusy ? "生成中…" : "AI 续写"}
+        </button>
+        <button
+          disabled={aiBusy}
+          onClick={onOpenBatchWrite}
+          title="从最后一章往后连续创作多章，或按目标字数写完整本书"
+          className="shrink-0 rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+        >
+          批量写章
         </button>
       </div>
 

@@ -17,6 +17,12 @@ pub struct Project {
     pub description: String,
     /// 番茄风长简介（作品卖点）
     pub synopsis: String,
+    /// 全书目标字数（0 = 未设置），「写完整本书」按它推算章数
+    pub target_total_words: i64,
+    /// 每章目标字数（0 = 未设置），批量生成的默认每章篇幅
+    pub target_chapter_words: i64,
+    /// 写作风格（0 = 不指定），对应 styles 表
+    pub style_id: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -85,6 +91,8 @@ pub struct Video {
     pub narration: String,
     /// draft → storyboarded → imaging → voicing → composing → done / error
     pub status: String,
+    /// image = 静图运镜（默认）/ video = 图生视频（Seedance，按量计费）
+    pub mode: String,
     pub output_path: String,
     pub error: String,
     pub created_at: i64,
@@ -103,9 +111,28 @@ pub struct VideoShot {
     pub prompt: String,
     pub image_path: String,
     pub audio_path: String,
+    /// 图生视频产物（mode=video 时生成）
+    pub video_path: String,
     pub duration_ms: i64,
     /// pending / imaged / voiced / error
     pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// 写作风格（蒸馏自参考书籍样本，全局复用，创建作品时选择）
+#[derive(Debug, Serialize, Clone)]
+pub struct Style {
+    pub id: i64,
+    pub name: String,
+    /// 来源说明（书名 / 链接 / 文件名）
+    pub source: String,
+    /// 样本字数
+    pub sample_chars: i64,
+    /// 蒸馏出的风格卡（写作时注入 prompt）
+    pub guide: String,
+    /// 代表性示例片段（前端展示）
+    pub example: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -123,8 +150,33 @@ pub struct OutlineItem {
     pub updated_at: i64,
 }
 
+/// 任务队列中的一条长任务（批量写章 / 视频镜头生成等）
+#[derive(Debug, Serialize, Clone)]
+pub struct Task {
+    pub id: i64,
+    pub project_id: i64,
+    /// batch_chapters / video_shots
+    pub kind: String,
+    /// 展示名（如 "《xxx》批量写章 ×10"）
+    pub label: String,
+    /// pending / running / done / error / cancelled
+    pub status: String,
+    /// 执行参数（JSON）
+    pub payload: String,
+    pub progress_current: i64,
+    pub progress_total: i64,
+    pub progress_label: String,
+    /// 完成说明（如 "新增 10 章"）
+    pub result: String,
+    pub error: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Db 可 Clone：任务 worker 与命令共享同一连接（内部 Arc）
+#[derive(Clone)]
 pub struct Db {
-    conn: Mutex<Connection>,
+    conn: std::sync::Arc<Mutex<Connection>>,
 }
 
 fn now() -> i64 {
@@ -145,7 +197,7 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let db = Self {
-            conn: Mutex::new(conn),
+            conn: std::sync::Arc::new(Mutex::new(conn)),
         };
         db.migrate()?;
         Ok(db)
@@ -282,23 +334,86 @@ impl Db {
             .context("迁移 v6 失败")?;
         }
         conn.pragma_update(None, "user_version", 6)?;
+        // v7：作品字数目标（全书总字数 / 每章字数），批量生成章节用
+        if version < 7 {
+            conn.execute_batch(
+                "ALTER TABLE projects ADD COLUMN target_total_words INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE projects ADD COLUMN target_chapter_words INTEGER NOT NULL DEFAULT 0;",
+            )
+            .context("迁移 v7 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 7)?;
+        // v8：写作风格库 + 作品关联风格
+        if version < 8 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS styles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT '',
+                    sample_chars INTEGER NOT NULL DEFAULT 0,
+                    guide TEXT NOT NULL DEFAULT '',
+                    example TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                ALTER TABLE projects ADD COLUMN style_id INTEGER NOT NULL DEFAULT 0;",
+            )
+            .context("迁移 v8 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 8)?;
+        // v9：任务队列表 + 视频图生视频（videos.mode / video_shots.video_path）
+        if version < 9 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL DEFAULT 0,
+                    kind TEXT NOT NULL,
+                    label TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    progress_current INTEGER NOT NULL DEFAULT 0,
+                    progress_total INTEGER NOT NULL DEFAULT 0,
+                    progress_label TEXT NOT NULL DEFAULT '',
+                    result TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, created_at);
+                ALTER TABLE videos ADD COLUMN mode TEXT NOT NULL DEFAULT 'image';
+                ALTER TABLE video_shots ADD COLUMN video_path TEXT NOT NULL DEFAULT '';",
+            )
+            .context("迁移 v9 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 9)?;
         Ok(())
     }
 
     // ---------- 作品 ----------
 
-    pub fn create_project(&self, name: &str, description: &str) -> Result<Project> {
+    pub fn create_project(
+        &self,
+        name: &str,
+        description: &str,
+        target_total_words: i64,
+        target_chapter_words: i64,
+        style_id: i64,
+    ) -> Result<Project> {
         let conn = self.conn.lock().unwrap();
         let ts = now();
         conn.execute(
-            "INSERT INTO projects (name, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-            params![name, description, ts],
+            "INSERT INTO projects (name, description, target_total_words, target_chapter_words, style_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![name, description, target_total_words, target_chapter_words, style_id, ts],
         )?;
         Ok(Project {
             id: conn.last_insert_rowid(),
             name: name.to_string(),
             description: description.to_string(),
             synopsis: String::new(),
+            target_total_words,
+            target_chapter_words,
+            style_id,
             created_at: ts,
             updated_at: ts,
         })
@@ -307,7 +422,7 @@ impl Db {
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, synopsis, created_at, updated_at
+            "SELECT id, name, description, synopsis, target_total_words, target_chapter_words, style_id, created_at, updated_at
              FROM projects ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -316,11 +431,39 @@ impl Db {
                 name: r.get(1)?,
                 description: r.get(2)?,
                 synopsis: r.get(3)?,
-                created_at: r.get(4)?,
-                updated_at: r.get(5)?,
+                target_total_words: r.get(4)?,
+                target_chapter_words: r.get(5)?,
+                style_id: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 给作品指定写作风格（0 = 清除）
+    pub fn set_project_style(&self, id: i64, style_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE projects SET style_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![style_id, now(), id],
+        )?;
+        Ok(())
+    }
+
+    /// 更新作品字数目标（批量写章弹层可改）
+    pub fn update_project_targets(
+        &self,
+        id: i64,
+        target_total_words: i64,
+        target_chapter_words: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE projects SET target_total_words = ?1, target_chapter_words = ?2, updated_at = ?3 WHERE id = ?4",
+            params![target_total_words, target_chapter_words, now(), id],
+        )?;
+        Ok(())
     }
 
     /// 保存作品信息（题材标签 + 长简介）
@@ -428,6 +571,51 @@ impl Db {
             params![title, content, word_count, now(), id],
         )?;
         Ok(())
+    }
+
+    /// 全书最后一章（按 order_index 最大，容忍删章后的空洞）
+    pub fn last_chapter(&self, project_id: i64) -> Result<Option<Chapter>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, title, content, summary, order_index, word_count, created_at, updated_at
+             FROM chapters WHERE project_id = ?1 ORDER BY order_index DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![project_id], |r| {
+            Ok(Chapter {
+                id: r.get(0)?,
+                project_id: r.get(1)?,
+                title: r.get(2)?,
+                content: r.get(3)?,
+                summary: r.get(4)?,
+                order_index: r.get(5)?,
+                word_count: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
+            })
+        })?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// 全书已写总字数（所有章 word_count 求和）
+    pub fn total_word_count(&self, project_id: i64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let total: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(word_count), 0) FROM chapters WHERE project_id = ?1",
+            params![project_id],
+            |r| r.get(0),
+        )?;
+        Ok(total)
+    }
+
+    /// 章节总数（批量生成自动编号用）
+    pub fn chapter_count(&self, project_id: i64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM chapters WHERE project_id = ?1",
+            params![project_id],
+            |r| r.get(0),
+        )?;
+        Ok(count)
     }
 
     pub fn save_summary(&self, id: i64, summary: &str) -> Result<()> {
@@ -738,13 +926,19 @@ impl Db {
 
     // ---------- 推文视频 ----------
 
-    pub fn create_video(&self, project_id: i64, title: &str, chapter_ids: &str) -> Result<Video> {
+    pub fn create_video(
+        &self,
+        project_id: i64,
+        title: &str,
+        chapter_ids: &str,
+        mode: &str,
+    ) -> Result<Video> {
         let conn = self.conn.lock().unwrap();
         let ts = now();
         conn.execute(
-            "INSERT INTO videos (project_id, title, chapter_ids, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![project_id, title, chapter_ids, ts],
+            "INSERT INTO videos (project_id, title, chapter_ids, mode, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![project_id, title, chapter_ids, mode, ts],
         )?;
         Ok(Video {
             id: conn.last_insert_rowid(),
@@ -753,6 +947,7 @@ impl Db {
             chapter_ids: chapter_ids.to_string(),
             narration: String::new(),
             status: "draft".to_string(),
+            mode: mode.to_string(),
             output_path: String::new(),
             error: String::new(),
             created_at: ts,
@@ -763,7 +958,7 @@ impl Db {
     pub fn list_videos(&self, project_id: i64) -> Result<Vec<Video>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, title, chapter_ids, narration, status, output_path, error, created_at, updated_at
+            "SELECT id, project_id, title, chapter_ids, narration, status, mode, output_path, error, created_at, updated_at
              FROM videos WHERE project_id = ?1 ORDER BY id DESC",
         )?;
         let rows = stmt.query_map(params![project_id], |r| {
@@ -774,10 +969,11 @@ impl Db {
                 chapter_ids: r.get(3)?,
                 narration: r.get(4)?,
                 status: r.get(5)?,
-                output_path: r.get(6)?,
-                error: r.get(7)?,
-                created_at: r.get(8)?,
-                updated_at: r.get(9)?,
+                mode: r.get(6)?,
+                output_path: r.get(7)?,
+                error: r.get(8)?,
+                created_at: r.get(9)?,
+                updated_at: r.get(10)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -786,7 +982,7 @@ impl Db {
     pub fn get_video(&self, id: i64) -> Result<Video> {
         let conn = self.conn.lock().unwrap();
         let v = conn.query_row(
-            "SELECT id, project_id, title, chapter_ids, narration, status, output_path, error, created_at, updated_at
+            "SELECT id, project_id, title, chapter_ids, narration, status, mode, output_path, error, created_at, updated_at
              FROM videos WHERE id = ?1",
             params![id],
             |r| {
@@ -797,10 +993,11 @@ impl Db {
                     chapter_ids: r.get(3)?,
                     narration: r.get(4)?,
                     status: r.get(5)?,
-                    output_path: r.get(6)?,
-                    error: r.get(7)?,
-                    created_at: r.get(8)?,
-                    updated_at: r.get(9)?,
+                    mode: r.get(6)?,
+                    output_path: r.get(7)?,
+                    error: r.get(8)?,
+                    created_at: r.get(9)?,
+                    updated_at: r.get(10)?,
                 })
             },
         )?;
@@ -865,7 +1062,7 @@ impl Db {
     pub fn list_shots(&self, video_id: i64) -> Result<Vec<VideoShot>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, video_id, idx, text, prompt, image_path, audio_path, duration_ms, status, created_at, updated_at
+            "SELECT id, video_id, idx, text, prompt, image_path, audio_path, video_path, duration_ms, status, created_at, updated_at
              FROM video_shots WHERE video_id = ?1 ORDER BY idx ASC",
         )?;
         let rows = stmt.query_map(params![video_id], |r| {
@@ -877,10 +1074,11 @@ impl Db {
                 prompt: r.get(4)?,
                 image_path: r.get(5)?,
                 audio_path: r.get(6)?,
-                duration_ms: r.get(7)?,
-                status: r.get(8)?,
-                created_at: r.get(9)?,
-                updated_at: r.get(10)?,
+                video_path: r.get(7)?,
+                duration_ms: r.get(8)?,
+                status: r.get(9)?,
+                created_at: r.get(10)?,
+                updated_at: r.get(11)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -889,7 +1087,7 @@ impl Db {
     pub fn get_shot(&self, id: i64) -> Result<VideoShot> {
         let conn = self.conn.lock().unwrap();
         let s = conn.query_row(
-            "SELECT id, video_id, idx, text, prompt, image_path, audio_path, duration_ms, status, created_at, updated_at
+            "SELECT id, video_id, idx, text, prompt, image_path, audio_path, video_path, duration_ms, status, created_at, updated_at
              FROM video_shots WHERE id = ?1",
             params![id],
             |r| {
@@ -901,10 +1099,11 @@ impl Db {
                     prompt: r.get(4)?,
                     image_path: r.get(5)?,
                     audio_path: r.get(6)?,
-                    duration_ms: r.get(7)?,
-                    status: r.get(8)?,
-                    created_at: r.get(9)?,
-                    updated_at: r.get(10)?,
+                    video_path: r.get(7)?,
+                    duration_ms: r.get(8)?,
+                    status: r.get(9)?,
+                    created_at: r.get(10)?,
+                    updated_at: r.get(11)?,
                 })
             },
         )?;
@@ -916,6 +1115,16 @@ impl Db {
         conn.execute(
             "UPDATE video_shots SET prompt = ?1, updated_at = ?2 WHERE id = ?3",
             params![prompt, now(), shot_id],
+        )?;
+        Ok(())
+    }
+
+    /// 写入镜头的图生视频产物路径
+    pub fn set_shot_video(&self, shot_id: i64, video_path: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE video_shots SET video_path = ?1, updated_at = ?2 WHERE id = ?3",
+            params![video_path, now(), shot_id],
         )?;
         Ok(())
     }
@@ -953,6 +1162,213 @@ impl Db {
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
+        )?;
+        Ok(())
+    }
+
+    // ---------- 写作风格 ----------
+
+    pub fn create_style(
+        &self,
+        name: &str,
+        source: &str,
+        sample_chars: i64,
+        guide: &str,
+        example: &str,
+    ) -> Result<Style> {
+        let conn = self.conn.lock().unwrap();
+        let ts = now();
+        conn.execute(
+            "INSERT INTO styles (name, source, sample_chars, guide, example, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![name, source, sample_chars, guide, example, ts],
+        )?;
+        Ok(Style {
+            id: conn.last_insert_rowid(),
+            name: name.to_string(),
+            source: source.to_string(),
+            sample_chars,
+            guide: guide.to_string(),
+            example: example.to_string(),
+            created_at: ts,
+            updated_at: ts,
+        })
+    }
+
+    pub fn list_styles(&self) -> Result<Vec<Style>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, source, sample_chars, guide, example, created_at, updated_at
+             FROM styles ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Style {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                source: r.get(2)?,
+                sample_chars: r.get(3)?,
+                guide: r.get(4)?,
+                example: r.get(5)?,
+                created_at: r.get(6)?,
+                updated_at: r.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn get_style(&self, id: i64) -> Result<Option<Style>> {
+        Ok(self.list_styles()?.into_iter().find(|s| s.id == id))
+    }
+
+    pub fn delete_style(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM styles WHERE id = ?1", params![id])?;
+        // 引用该风格的作品一并解除关联
+        conn.execute(
+            "UPDATE projects SET style_id = 0 WHERE style_id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    // ---------- 任务队列 ----------
+
+    pub fn create_task(
+        &self,
+        project_id: i64,
+        kind: &str,
+        label: &str,
+        payload: &str,
+    ) -> Result<Task> {
+        let conn = self.conn.lock().unwrap();
+        let ts = now();
+        conn.execute(
+            "INSERT INTO tasks (project_id, kind, label, payload, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![project_id, kind, label, payload, ts],
+        )?;
+        Ok(Task {
+            id: conn.last_insert_rowid(),
+            project_id,
+            kind: kind.to_string(),
+            label: label.to_string(),
+            status: "pending".to_string(),
+            payload: payload.to_string(),
+            progress_current: 0,
+            progress_total: 0,
+            progress_label: String::new(),
+            result: String::new(),
+            error: String::new(),
+            created_at: ts,
+            updated_at: ts,
+        })
+    }
+
+    fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
+        Ok(Task {
+            id: r.get(0)?,
+            project_id: r.get(1)?,
+            kind: r.get(2)?,
+            label: r.get(3)?,
+            status: r.get(4)?,
+            payload: r.get(5)?,
+            progress_current: r.get(6)?,
+            progress_total: r.get(7)?,
+            progress_label: r.get(8)?,
+            result: r.get(9)?,
+            error: r.get(10)?,
+            created_at: r.get(11)?,
+            updated_at: r.get(12)?,
+        })
+    }
+
+    const TASK_COLS: &'static str = "id, project_id, kind, label, status, payload, \
+        progress_current, progress_total, progress_label, result, error, created_at, updated_at";
+
+    pub fn list_tasks(&self) -> Result<Vec<Task>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM tasks ORDER BY id DESC LIMIT 100",
+            Self::TASK_COLS
+        ))?;
+        let rows = stmt.query_map([], Self::row_to_task)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn get_task(&self, id: i64) -> Result<Task> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            &format!("SELECT {} FROM tasks WHERE id = ?1", Self::TASK_COLS),
+            params![id],
+            Self::row_to_task,
+        )?)
+    }
+
+    /// 取最早的一条 pending 任务并置为 running（单 worker 串行，无需原子化）
+    pub fn take_next_pending_task(&self) -> Result<Option<Task>> {
+        let conn = self.conn.lock().unwrap();
+        let task = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {} FROM tasks WHERE status = 'pending' ORDER BY id ASC LIMIT 1",
+                Self::TASK_COLS
+            ))?;
+            let mut rows = stmt.query_map([], Self::row_to_task)?;
+            rows.next().transpose()?
+        };
+        if let Some(t) = task {
+            conn.execute(
+                "UPDATE tasks SET status = 'running', updated_at = ?1 WHERE id = ?2",
+                params![now(), t.id],
+            )?;
+            return Ok(Some(t));
+        }
+        Ok(None)
+    }
+
+    pub fn update_task_progress(
+        &self,
+        id: i64,
+        current: i64,
+        total: i64,
+        label: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET progress_current = ?1, progress_total = ?2, progress_label = ?3, updated_at = ?4
+             WHERE id = ?5",
+            params![current, total, label, now(), id],
+        )?;
+        Ok(())
+    }
+
+    /// 任务收尾：done / error / cancelled
+    pub fn finish_task(&self, id: i64, status: &str, result: &str, error: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET status = ?1, result = ?2, error = ?3, updated_at = ?4 WHERE id = ?5",
+            params![status, result, error, now(), id],
+        )?;
+        Ok(())
+    }
+
+    /// 同作品是否已有未完结的同类任务（防重复入队）
+    pub fn has_active_task(&self, project_id: i64, kind: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE project_id = ?1 AND kind = ?2
+             AND status IN ('pending', 'running')",
+            params![project_id, kind],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// 清理已完结任务（done/error/cancelled）
+    pub fn clear_finished_tasks(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM tasks WHERE status IN ('done', 'error', 'cancelled')",
+            [],
         )?;
         Ok(())
     }

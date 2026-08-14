@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import type { BootstrapDraft, Project } from "../types";
+import type { BootstrapDraft, Project, Style } from "../types";
 import { AICreateWizard } from "./AICreateWizard";
 
 interface BookshelfProps {
   projects: Project[];
   onOpen: (id: number) => void;
-  onCreate: (name: string) => void;
+  onCreate: (
+    name: string,
+    targetTotalWords?: number,
+    targetChapterWords?: number,
+    styleId?: number
+  ) => void;
   onAiCreate: (draft: BootstrapDraft) => void;
   onRename: (id: number, name: string) => void;
   onDelete: (id: number) => void;
@@ -241,55 +246,123 @@ function BookCard({
   );
 }
 
-/** 空白创建：次级入口，点开就地输入 */
-function NewBookButton({ onCreate }: { onCreate: (name: string) => void }) {
+/** 解析可选字数输入：空/非法 → undefined（即不设置） */
+function parseWords(s: string): number | undefined {
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** 空白创建：次级入口，点开弹出小卡片（书名 + 可选字数目标 + 写作风格） */
+function NewBookButton({
+  onCreate,
+}: {
+  onCreate: (
+    name: string,
+    targetTotalWords?: number,
+    targetChapterWords?: number,
+    styleId?: number
+  ) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [totalWords, setTotalWords] = useState("");
+  const [chapterWords, setChapterWords] = useState("");
+  const [styles, setStyles] = useState<Style[]>([]);
+  const [styleId, setStyleId] = useState(0);
+
+  // 打开卡片时拉风格库（全局资源，通常没几个，随开随拉保证最新）
+  useEffect(() => {
+    if (open) void api.listStyles().then(setStyles).catch(console.error);
+  }, [open]);
 
   const submit = () => {
     const n = name.trim();
     if (!n) return;
-    onCreate(n);
+    onCreate(
+      n,
+      parseWords(totalWords),
+      parseWords(chapterWords),
+      styleId > 0 ? styleId : undefined
+    );
     setName("");
+    setTotalWords("");
+    setChapterWords("");
+    setStyleId(0);
     setOpen(false);
   };
 
-  if (!open) {
-    return (
+  return (
+    <div className="relative">
       <button
         className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen((v) => !v)}
       >
         空白创建
       </button>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2 rounded-full bg-surface p-1.5 pl-4 shadow-card">
-      <input
-        autoFocus
-        className="w-40 bg-transparent text-sm outline-none placeholder:text-faint"
-        placeholder="作品名称"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") submit();
-          if (e.key === "Escape") setOpen(false);
-        }}
-      />
-      <button
-        className="rounded-full bg-accent px-3.5 py-1.5 text-xs font-semibold text-surface hover:bg-accent-h"
-        onClick={submit}
-      >
-        创建
-      </button>
-      <button
-        className="pr-2 text-xs text-muted hover:text-body"
-        onClick={() => setOpen(false)}
-      >
-        取消
-      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-10 mt-2 w-64 rounded-2xl bg-surface p-4 shadow-float">
+          <input
+            autoFocus
+            className="w-full rounded-[10px] bg-canvas px-3 py-2 text-sm text-ink outline-none placeholder:text-faint focus:bg-surface2"
+            placeholder="作品名称"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+              if (e.key === "Escape") setOpen(false);
+            }}
+          />
+          <input
+            className="mt-2 w-full rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
+            placeholder="全书目标字数（可选，如 200000）"
+            inputMode="numeric"
+            value={totalWords}
+            onChange={(e) => setTotalWords(e.target.value)}
+          />
+          <input
+            className="mt-2 w-full rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
+            placeholder="每章字数（可选，如 2000）"
+            inputMode="numeric"
+            value={chapterWords}
+            onChange={(e) => setChapterWords(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+              if (e.key === "Escape") setOpen(false);
+            }}
+          />
+          {styles.length > 0 && (
+            <select
+              className="mt-2 w-full rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none focus:bg-surface2"
+              value={styleId}
+              onChange={(e) => setStyleId(parseInt(e.target.value, 10))}
+            >
+              <option value={0}>写作风格（可选，默认无）</option>
+              {styles.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <p className="mt-2 text-[11px] leading-4 text-faint">
+            填了字数目标后，写作页可一键「写完整本书」
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              className="rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-surface hover:bg-accent-h"
+              onClick={submit}
+            >
+              创建
+            </button>
+            <button
+              className="px-2 py-1.5 text-xs text-muted hover:text-body"
+              onClick={() => setOpen(false)}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

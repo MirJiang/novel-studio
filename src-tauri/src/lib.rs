@@ -1,11 +1,15 @@
 //! Novel Studio 后端入口
 
 mod commands;
+mod commands_publish;
+mod commands_style;
 mod commands_video;
 mod db;
 mod image_gen;
 mod llm;
+mod tasks;
 mod video;
+mod video_gen;
 
 use tauri::Manager;
 
@@ -18,11 +22,13 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let db = db::Db::new(&dir.join("novel-studio.db"))?;
+            tasks::spawn_worker(app.handle().clone(), db.clone()); // 任务队列 worker（长任务串行执行）
             app.manage(db);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::create_project,
+            commands::update_project_targets,
             commands::list_projects,
             commands::rename_project,
             commands::delete_project,
@@ -54,6 +60,12 @@ pub fn run() {
             commands::get_cover_data,
             commands::summary_stats,
             commands::generate_missing_summaries,
+            tasks::enqueue_batch_chapters,
+            tasks::enqueue_video_shots,
+            tasks::list_tasks,
+            tasks::cancel_task,
+            tasks::retry_task,
+            tasks::clear_finished_tasks,
             commands::check_consistency,
             commands::save_check_report,
             commands::list_check_reports,
@@ -63,6 +75,12 @@ pub fn run() {
             commands::generate_summary,
             commands::ai_bootstrap_draft,
             commands::ai_polish_idea,
+            commands_style::distill_style,
+            commands_style::list_styles,
+            commands_style::delete_style,
+            commands_style::set_project_style,
+            commands_publish::open_fanqie_window,
+            commands_publish::fill_chapter_draft,
             commands_video::create_video,
             commands_video::list_videos,
             commands_video::get_video_detail,
@@ -72,6 +90,7 @@ pub fn run() {
             commands_video::generate_narration,
             commands_video::generate_storyboard,
             commands_video::generate_shot_image,
+            commands_video::generate_shot_video,
             commands_video::generate_missing_images,
             commands_video::synthesize_voices,
             commands_video::compose_video,

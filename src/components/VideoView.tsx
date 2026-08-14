@@ -24,6 +24,7 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
   // 新建
   const [creating, setCreating] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [mode, setMode] = useState<"image" | "video">("image"); // 静图运镜 / 图生视频
 
   // 口播稿
   const [narration, setNarration] = useState("");
@@ -94,11 +95,42 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
   const create = async () => {
     if (picked.size === 0) return;
     const title = `推文 ${new Date().toLocaleDateString("zh-CN")}`;
-    const v = await api.createVideo(projectId, title, [...picked].sort((a, b) => a - b));
+    const v = await api.createVideo(
+      projectId,
+      title,
+      [...picked].sort((a, b) => a - b),
+      mode
+    );
     setCreating(false);
     setPicked(new Set());
     await refreshVideos();
     await loadDetail(v.id);
+  };
+
+  /** 镜头视频入队（任务队列执行，进度看任务面板/右下角浮条） */
+  const enqueueShotVideos = async () => {
+    if (!detail) return;
+    setError(null);
+    try {
+      await api.enqueueVideoShots(detail.video.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  /** 单镜重跑视频 */
+  const rerunShotVideo = async (shot: VideoShot) => {
+    if (shotBusy != null) return;
+    setShotBusy(shot.id);
+    setError(null);
+    try {
+      await api.generateShotVideo(shot.id);
+      if (detail) await loadDetail(detail.video.id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setShotBusy(null);
+    }
   };
 
   // ---------- 口播稿 ----------
@@ -250,6 +282,26 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
                 </label>
               ))}
             </div>
+            <div className="mt-2.5 flex gap-1 rounded-full bg-canvas p-1">
+              {(
+                [
+                  ["image", "静图运镜（免费）"],
+                  ["video", "图生视频（Seedance 计费）"],
+                ] as ["image" | "video", string][]
+              ).map(([m, label]) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={`flex-1 rounded-full px-2 py-1 text-[11px] transition-colors ${
+                    mode === m
+                      ? "bg-surface font-semibold text-ink shadow-card"
+                      : "text-muted hover:text-body"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <button
               disabled={picked.size === 0}
               className="mt-2.5 w-full rounded-full bg-accent py-1.5 text-xs font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
@@ -334,8 +386,10 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
                     thumb={thumbUrls[s.id]}
                     busy={shotBusy === s.id}
                     selected={selectedShot === s.id}
+                    videoMode={detail.video.mode === "video"}
                     onSelect={() => setSelectedShot(s.id)}
                     onRedraw={() => void redrawShot(s)}
+                    onRerunVideo={() => void rerunShotVideo(s)}
                     onSavePrompt={(p) => void api.updateShotPrompt(s.id, p)}
                   />
                 ))}
@@ -351,6 +405,14 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
                   disabled={busy || detail.shots.length === 0}
                   onClick={() => runStage("image")}
                 />
+                {detail.video.mode === "video" && (
+                  <StageButton
+                    label="镜头视频（入队）"
+                    hint={`${detail.shots.filter((s) => s.video_path).length}/${detail.shots.length} 已有视频 · 进度看任务页`}
+                    disabled={busy || detail.shots.length === 0}
+                    onClick={() => void enqueueShotVideos()}
+                  />
+                )}
                 <StageButton
                   label="生成配音"
                   hint={`${detail.shots.filter((s) => s.audio_path).length}/${detail.shots.length} 已配音`}
@@ -359,7 +421,13 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
                 />
                 <StageButton
                   label="合成视频"
-                  hint={detail.video.status === "done" ? "已完成，可再次合成" : "静图 + 运镜 + 字幕"}
+                  hint={
+                    detail.video.status === "done"
+                      ? "已完成，可再次合成"
+                      : detail.video.mode === "video"
+                        ? "镜头视频 + 字幕"
+                        : "静图 + 运镜 + 字幕"
+                  }
                   disabled={busy || detail.shots.length === 0}
                   primary
                   onClick={() => runStage("compose")}
@@ -482,16 +550,21 @@ function ShotCard({
   thumb,
   busy,
   selected,
+  videoMode,
   onSelect,
   onRedraw,
+  onRerunVideo,
   onSavePrompt,
 }: {
   shot: VideoShot;
   thumb?: string;
   busy: boolean;
   selected: boolean;
+  /** 图生视频模式：显示视频状态和单镜重跑 */
+  videoMode: boolean;
   onSelect: () => void;
   onRedraw: () => void;
+  onRerunVideo: () => void;
   onSavePrompt: (prompt: string) => void;
 }) {
   const [prompt, setPrompt] = useState(shot.prompt);
@@ -512,10 +585,25 @@ function ShotCard({
             {(shot.duration_ms / 1000).toFixed(1)}s
           </span>
         )}
+        {videoMode && shot.video_path && (
+          <span className="rounded-full bg-pgreen px-1.5 py-px text-[10px] text-pgreen-t">
+            已出视频
+          </span>
+        )}
+        {videoMode && (
+          <button
+            disabled={busy || !shot.image_path}
+            title={shot.image_path ? "用镜头图生成/重跑视频（约 1~2 分钟）" : "先生成镜头图"}
+            onClick={onRerunVideo}
+            className="ml-auto rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
+          >
+            {busy ? "处理中…" : shot.video_path ? "重跑视频" : "出视频"}
+          </button>
+        )}
         <button
           disabled={busy}
           onClick={onRedraw}
-          className="ml-auto rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
+          className={`${videoMode ? "" : "ml-auto "}rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40`}
         >
           {busy ? "绘图中…" : shot.image_path ? "重绘" : "生图"}
         </button>

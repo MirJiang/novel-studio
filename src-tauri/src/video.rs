@@ -176,45 +176,77 @@ pub fn probe_duration_ms(path: &Path) -> Result<i64> {
 pub struct ComposeShot {
     pub image: PathBuf,
     pub audio: PathBuf,
+    /// 图生视频产物（有则用真视频，无则静图 zoompan 运镜）
+    pub video: Option<PathBuf>,
     pub duration_ms: i64,
     pub text: String,
 }
 
-/// 合成竖屏短片：逐镜静图+推近运镜 → 拼接 → 配音轨 → 烧录字幕
+/// 合成竖屏短片：逐镜视频段（真视频或静图推近）→ 拼接 → 配音轨 → 烧录字幕
 pub fn compose(video_dir: &Path, shots: &[ComposeShot], out_path: &Path) -> Result<()> {
     let ffmpeg = find_tool("ffmpeg")?;
 
-    // 1. 逐镜生成视频段（1080x1920 30fps，缓慢推近）
+    // 1. 逐镜生成视频段（1080x1920 30fps）：有镜头视频就循环对齐时长，没有就静图缓慢推近
     let mut seg_names = Vec::new();
     for (i, s) in shots.iter().enumerate() {
         let seg = format!("seg-{i:02}.mp4");
         let secs = (s.duration_ms.max(800) as f64) / 1000.0;
-        let frames = (secs * 30.0).ceil() as i64;
-        let vf = format!(
-            "zoompan=z='min(1+0.0009*on,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:fps=30:s=1080x1920,format=yuv420p"
-        );
-        run_tool(
-            &ffmpeg,
-            &[
-                "-loop".into(),
-                "1".into(),
-                "-i".into(),
-                s.image.to_string_lossy().to_string(),
-                "-vf".into(),
-                vf,
-                "-c:v".into(),
-                "libx264".into(),
-                "-preset".into(),
-                "veryfast".into(),
-                "-crf".into(),
-                "20".into(),
-                "-t".into(),
-                format!("{secs:.3}"),
-                "-y".into(),
-                seg.clone(),
-            ],
-            video_dir,
-        )?;
+        match &s.video {
+            Some(clip) => {
+                // 镜头视频（5s）：配音比它长就循环补齐，统一缩放到 1080x1920
+                run_tool(
+                    &ffmpeg,
+                    &[
+                        "-stream_loop".into(),
+                        "-1".into(),
+                        "-i".into(),
+                        clip.to_string_lossy().to_string(),
+                        "-vf".into(),
+                        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p".into(),
+                        "-an".into(),
+                        "-c:v".into(),
+                        "libx264".into(),
+                        "-preset".into(),
+                        "veryfast".into(),
+                        "-crf".into(),
+                        "20".into(),
+                        "-t".into(),
+                        format!("{secs:.3}"),
+                        "-y".into(),
+                        seg.clone(),
+                    ],
+                    video_dir,
+                )?;
+            }
+            None => {
+                let frames = (secs * 30.0).ceil() as i64;
+                let vf = format!(
+                    "zoompan=z='min(1+0.0009*on,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:fps=30:s=1080x1920,format=yuv420p"
+                );
+                run_tool(
+                    &ffmpeg,
+                    &[
+                        "-loop".into(),
+                        "1".into(),
+                        "-i".into(),
+                        s.image.to_string_lossy().to_string(),
+                        "-vf".into(),
+                        vf,
+                        "-c:v".into(),
+                        "libx264".into(),
+                        "-preset".into(),
+                        "veryfast".into(),
+                        "-crf".into(),
+                        "20".into(),
+                        "-t".into(),
+                        format!("{secs:.3}"),
+                        "-y".into(),
+                        seg.clone(),
+                    ],
+                    video_dir,
+                )?;
+            }
+        }
         seg_names.push(seg);
     }
 
