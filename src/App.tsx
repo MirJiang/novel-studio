@@ -335,6 +335,19 @@ export default function App() {
     }
   };
 
+  /** 从书架进入作品：自动切到写作态——打开最近章节，没有记忆则打开最新一章 */
+  const handleOpenProject = async (id: number) => {
+    setCurrentProjectId(id);
+    const list = await api.listChapters(id);
+    if (list.length === 0) return; // 零章节新书停在空状态页（有批量写章入口）
+    const last = lastChapterRef.current;
+    const target =
+      last && list.some((c) => c.id === last.id)
+        ? last.id
+        : list[list.length - 1].id;
+    void handleSelectChapter(target);
+  };
+
   // 标题栏面包屑：作品名 / 当前视图
   const currentProject = projects.find((p) => p.id === currentProjectId);
   const viewLabel =
@@ -485,7 +498,7 @@ export default function App() {
         ) : currentProjectId == null ? (
           <Bookshelf
             projects={projects}
-            onOpen={setCurrentProjectId}
+            onOpen={(id) => void handleOpenProject(id)}
             onCreate={(name, total, per, styleId) =>
               void handleCreateProject(name, total, per, styleId)
             }
