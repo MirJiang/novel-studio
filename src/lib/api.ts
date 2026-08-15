@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BootstrapDraft, Chapter, ChapterMeta, CheckReportMeta, LoreEntry, OutlineItem, Project, Style, Task, Video, VideoDetail } from "../types";
+import type { BootstrapChatReply, BootstrapDraft, Chapter, ChapterMeta, ChatMsg, CheckReportMeta, LoreEntry, OutlineItem, Project, Style, Task, Video, VideoDetail } from "../types";
 
 /** 无边框窗口的自制标题栏控制 */
 const appWindow = getCurrentWindow();
@@ -410,6 +410,10 @@ export const api = {
   /** AI 起书：一句话创意 → 书名/简介/初始设定草稿 */
   aiBootstrapDraft: (idea: string) =>
     invoke<BootstrapDraft>("ai_bootstrap_draft", { idea }),
+
+  /** 对话式起书：多轮对话，AI 提问引导，信息够了自动带草稿 */
+  aiBootstrapChat: (messages: ChatMsg[]) =>
+    invoke<BootstrapChatReply>("ai_bootstrap_chat", { messages }),
 
   /** AI 润色创意：一句话创意 → 更具体的创作 brief */
   aiPolishIdea: (idea: string) => invoke<string>("ai_polish_idea", { idea }),

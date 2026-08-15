@@ -1,52 +1,65 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import type { BootstrapDraft, Style } from "../types";
+import type { BootstrapDraft, ChatMsg, Style } from "../types";
 
 interface AICreateWizardProps {
   onCancel: () => void;
   onCreate: (draft: BootstrapDraft) => void;
 }
 
+interface UiMsg {
+  role: "user" | "ai";
+  text: string;
+}
+
+const GREETING =
+  "想写本什么样的书？一句话说说你的想法就行——题材、主角、爽点，想到哪说到哪，我来帮你把它策划成一本能追更的网文。";
+
 /**
- * AI 起书向导：一句话创意 → AI 策划书名/简介/初始设定库 → 人确认后成书。
- * AI 出草稿、人做主编——草稿可改、词条可删，确认才落库。
+ * AI 起书向导（对话式）：AI 策划像编辑一样多轮提问，把题材/卖点/主角/爽点/篇幅
+ * 聊清楚后自动产出草稿；草稿可改、词条可删，确认才落库。
+ * 也可以随时点「直接生成」跳过问答。
  */
 export function AICreateWizard({ onCancel, onCreate }: AICreateWizardProps) {
-  const [idea, setIdea] = useState("");
+  const [messages, setMessages] = useState<UiMsg[]>([
+    { role: "ai", text: GREETING },
+  ]);
+  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [polishBusy, setPolishBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<BootstrapDraft | null>(null);
   const [styles, setStyles] = useState<Style[]>([]);
+  const chatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void api.listStyles().then(setStyles).catch(console.error);
   }, []);
 
-  const generate = async () => {
-    if (busy || idea.trim().length === 0) return;
-    setBusy(true);
+  // 新消息滚到底部
+  useEffect(() => {
+    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
+  }, [messages, busy]);
+
+  const send = async (text: string) => {
+    const content = text.trim();
+    if (!content || busy) return;
     setError(null);
+    const nextMsgs: UiMsg[] = [...messages, { role: "user", text: content }];
+    setMessages(nextMsgs);
+    setInput("");
+    setBusy(true);
     try {
-      setDraft(await api.aiBootstrapDraft(idea.trim()));
+      const history: ChatMsg[] = nextMsgs.map((m) => ({
+        role: m.role === "ai" ? "assistant" : "user",
+        content: m.text,
+      }));
+      const r = await api.aiBootstrapChat(history);
+      setMessages((prev) => [...prev, { role: "ai", text: r.reply }]);
+      if (r.draft) setDraft(r.draft);
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
-    }
-  };
-
-  /** 润色创意：粗糙的一句话 → 更具体的创作 brief，回填输入框可再改 */
-  const polish = async () => {
-    if (polishBusy || idea.trim().length === 0) return;
-    setPolishBusy(true);
-    setError(null);
-    try {
-      setIdea(await api.aiPolishIdea(idea.trim()));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setPolishBusy(false);
     }
   };
 
@@ -57,52 +70,80 @@ export function AICreateWizard({ onCancel, onCreate }: AICreateWizardProps) {
 
   return (
     <div className="mt-6 rounded-2xl bg-surface p-6 shadow-card">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold text-ink">AI 辅助创建</h2>
+      <div className="flex items-center gap-2.5">
+        <h2 className="text-[15px] font-bold text-ink">AI 辅助创建</h2>
+        <span className="text-[11px] text-faint">
+          聊清楚再开书：题材 → 卖点 → 主角 → 爽点 → 篇幅
+        </span>
         <button
-          className="rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-hover hover:text-body"
+          className="ml-auto text-faint hover:text-body"
           onClick={onCancel}
         >
-          收起
+          ✕
         </button>
       </div>
 
-      {!draft ? (
-        <>
-          <textarea
-            autoFocus
-            className="mt-4 h-24 w-full resize-none rounded-xl bg-canvas p-3 text-sm leading-6 text-body outline-none placeholder:text-faint focus:bg-surface2"
-            placeholder="一句话创意，越具体越好。&#10;例：末法时代的灵气复苏，外卖小哥意外绑定地府外卖系统，给鬼送餐能获得阴德"
-            value={idea}
-            onChange={(e) => setIdea(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void generate();
-            }}
-          />
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              disabled={busy || idea.trim().length === 0}
-              className="rounded-full bg-accent px-5 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
-              onClick={() => void generate()}
-            >
-              {busy ? "AI 策划中…" : "生成草稿"}
-            </button>
-            <button
-              disabled={polishBusy || busy || idea.trim().length === 0}
-              title="AI 把创意补得更具体：题材定位、主角、金手指、核心冲突与爽点"
-              className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
-              onClick={() => void polish()}
-            >
-              {polishBusy ? "润色中…" : "润色创意"}
-            </button>
-            <span className="text-[11px] text-faint">
-              没思路时先点「润色创意」，AI 帮你把一句话补完整
-            </span>
+      {/* 对话区 */}
+      <div
+        ref={chatRef}
+        className="mt-4 flex max-h-72 min-h-32 flex-col gap-2.5 overflow-y-auto rounded-xl bg-canvas p-4"
+      >
+        {messages.map((m, i) => (
+          <div
+            key={i}
+            className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 ${
+              m.role === "ai"
+                ? "self-start bg-surface text-body shadow-card"
+                : "self-end bg-accent text-surface"
+            }`}
+          >
+            {m.text}
           </div>
-        </>
-      ) : (
-        <>
-          <div className="mt-4 grid grid-cols-[72px_1fr] items-center gap-x-3 gap-y-3">
+        ))}
+        {busy && (
+          <div className="self-start rounded-2xl bg-surface px-3.5 py-2.5 text-[13px] text-faint shadow-card">
+            策划思考中…
+          </div>
+        )}
+      </div>
+
+      {/* 输入区 */}
+      <div className="mt-3 flex gap-2">
+        <input
+          className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+          placeholder="回复策划，或补充你的想法…"
+          value={input}
+          disabled={busy}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void send(input)}
+        />
+        <button
+          disabled={busy || !input.trim()}
+          onClick={() => void send(input)}
+          className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+        >
+          发送
+        </button>
+        <button
+          disabled={busy}
+          title="跳过问答，按现有信息直接出方案"
+          onClick={() => void send("信息够了，直接生成方案")}
+          className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+        >
+          直接生成
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-3 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
+          {error}
+        </p>
+      )}
+
+      {/* 草稿编辑（对话产出后显示） */}
+      {draft && (
+        <div className="mt-5 border-t border-line pt-5">
+          <div className="grid grid-cols-[72px_1fr] items-center gap-x-3 gap-y-3">
             <span className="text-xs text-muted">书名</span>
             <input
               className="rounded-[10px] bg-canvas px-3 py-2 text-sm font-semibold text-ink outline-none focus:bg-surface2"
@@ -214,24 +255,18 @@ export function AICreateWizard({ onCancel, onCreate }: AICreateWizardProps) {
             <button
               disabled={busy}
               className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
-              onClick={() => void generate()}
+              onClick={() => void send("换个方向，再来一版")}
             >
-              {busy ? "AI 策划中…" : "换一版"}
+              换一版
             </button>
             <button
               className="px-3 py-2 text-xs text-muted hover:text-body"
               onClick={() => setDraft(null)}
             >
-              返回改创意
+              继续聊
             </button>
           </div>
-        </>
-      )}
-
-      {error && (
-        <p className="mt-3 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
-          {error}
-        </p>
+        </div>
       )}
     </div>
   );

@@ -98,6 +98,20 @@ export interface BootstrapDraft {
   lore: BootstrapLore[];
 }
 
+/** 对话式起书：AI 回复 */
+export interface BootstrapChatReply {
+  /** AI 的回复文本（提问或策划总结） */
+  reply: string;
+  /** 信息足够时附带的成书草稿 */
+  draft?: BootstrapDraft | null;
+}
+
+/** 对话消息 */
+export interface ChatMsg {
+  role: "user" | "assistant";
+  content: string;
+}
+
 /** 大纲节点（分卷/情节节点） */
 export interface OutlineItem {
   id: number;

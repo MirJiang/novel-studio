@@ -74,6 +74,7 @@ pub fn run() {
             commands::ai_transform,
             commands::generate_summary,
             commands::ai_bootstrap_draft,
+            commands::ai_bootstrap_chat,
             commands::ai_polish_idea,
             commands_style::distill_style,
             commands_style::list_styles,

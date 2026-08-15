@@ -1414,6 +1414,12 @@ pub struct BootstrapDraft {
     /// 番茄风长简介
     #[serde(default)]
     pub synopsis: String,
+    /// 全书目标字数（对话中可收集；0/None = 未设置）
+    #[serde(default)]
+    pub target_total_words: Option<i64>,
+    /// 每章目标字数
+    #[serde(default)]
+    pub target_chapter_words: Option<i64>,
     pub lore: Vec<BootstrapLore>,
 }
 
@@ -1462,6 +1468,10 @@ pub async fn ai_bootstrap_draft(
     .await
     .map_err(|e| e.to_string())?;
 
+    parse_bootstrap_draft(&raw)
+}
+
+fn parse_bootstrap_draft(raw: &str) -> Result<BootstrapDraft, String> {
     let start = raw.find('{').ok_or("策划结果不是 JSON")?;
     let end = raw.rfind('}').ok_or("策划结果不是 JSON")?;
     let mut draft: BootstrapDraft =
@@ -1479,4 +1489,87 @@ pub async fn ai_bootstrap_draft(
         return Err("策划结果缺少书名，请重试".to_string());
     }
     Ok(draft)
+}
+
+// ---------- 对话式起书 ----------
+
+const BOOTSTRAP_CHAT_SYSTEM: &str = "你是资深中文网文策划，深谙番茄/起点市场与读者口味。\
+你在和用户通过多轮对话共创一部新书。\n\
+【要弄清的事】（缺什么问什么，已在对话里说过的不要重复问）\n\
+1. 题材与频道：男频/女频、具体类型（都市/仙侠/古言/悬疑…）\n\
+2. 核心卖点与金手指：这本书最勾人的一点是什么\n\
+3. 主角：谁、什么处境、什么性格\n\
+4. 故事引擎与爽点类型：升级/复仇/甜宠/悬疑…读者追更追的是什么\n\
+5. 篇幅目标：全书大概多少字、每章多少字（用户没概念就按题材给建议）\n\
+【提问纪律】\n\
+- 每轮最多问 1~2 个问题，挑信息缺口最大的问，绝不把一堆问题糊用户脸上\n\
+- 用户说“直接生成”“你看着办”之类的话，或信息已够用（通常 2~4 轮）时，立刻出最终方案\n\
+- 回答用户问题时顺带给出你的专业建议，别只做复读机\n\
+【出最终方案的格式】（严格遵守）\n\
+先输出一段话总结策划思路（卖点/故事引擎/前三章怎么抓人），然后另起一行输出标记 [DRAFT]，\
+标记后紧跟一个 JSON 对象：\
+{\"name\": \"书名（2~6字，有网感）\", \"description\": \"题材+一句话卖点，20字内\", \
+\"synopsis\": \"番茄风简介100~150字：第一句钩子、点出看点、结尾悬念\", \
+\"target_total_words\": 全书目标字数（数字）, \"target_chapter_words\": 每章字数（数字，网文一般 2000~3000）, \
+\"lore\": [{\"category\": \"人物/世界观/地点/物品/伏笔/其他\", \"title\": \"词条名\", \
+\"content\": \"设定内容\", \"keywords\": \"触发词,逗号分隔\", \"always_include\": true}…]}\
+（lore 4~6 条，必含主角人物卡 always_include=true、核心对手、世界观、金手指）";
+
+#[derive(Debug, Serialize)]
+pub struct BootstrapChatReply {
+    /// AI 的回复文本（提问或策划总结）
+    pub reply: String,
+    /// 信息足够时附带的成书草稿（None = 还在提问阶段）
+    pub draft: Option<BootstrapDraft>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatMsg {
+    pub role: String,
+    pub content: String,
+}
+
+/// 对话式起书：AI 策划多轮提问，信息够了自动带草稿
+#[tauri::command]
+pub async fn ai_bootstrap_chat(
+    db: State<'_, Db>,
+    messages: Vec<ChatMsg>,
+) -> Result<BootstrapChatReply, String> {
+    if messages.is_empty() {
+        return Err("对话为空".to_string());
+    }
+    let cfg = load_llm_config(&db);
+    let mut msgs: Vec<(String, String)> = vec![(
+        "system".to_string(),
+        BOOTSTRAP_CHAT_SYSTEM.to_string(),
+    )];
+    for m in messages {
+        let role = if m.role == "assistant" { "assistant" } else { "user" };
+        msgs.push((role.to_string(), m.content));
+    }
+    let raw = llm::chat_once(cfg, msgs).await.map_err(|e| e.to_string())?;
+
+    if let Some(pos) = raw.find("[DRAFT]") {
+        let reply = raw[..pos].trim().to_string();
+        match parse_bootstrap_draft(&raw[pos + 7..]) {
+            Ok(draft) => Ok(BootstrapChatReply {
+                reply: if reply.is_empty() {
+                    "策划方案好了，看看：".to_string()
+                } else {
+                    reply
+                },
+                draft: Some(draft),
+            }),
+            // 标记解析失败不硬报错：把原文当普通回复给用户，可继续说"重新生成"
+            Err(_) => Ok(BootstrapChatReply {
+                reply: raw.trim().to_string(),
+                draft: None,
+            }),
+        }
+    } else {
+        Ok(BootstrapChatReply {
+            reply: raw.trim().to_string(),
+            draft: None,
+        })
+    }
 }
