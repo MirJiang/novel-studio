@@ -41,6 +41,8 @@ function parseReply(raw: string): { reply: string; draft: BootstrapDraft | null 
         ...l,
         category: VALID_CATEGORIES.includes(l.category) ? l.category : "其他",
       }));
+    if (!Array.isArray(d.outline)) d.outline = [];
+    if (!Array.isArray(d.opening)) d.opening = [];
     return { reply: reply || "策划方案好了，看看：", draft: d };
   } catch {
     return { reply: raw.trim(), draft: null };
@@ -76,10 +78,12 @@ function AiMarkdown({ text }: { text: string }) {
   );
 }
 
+type DraftTab = "base" | "lore" | "outline" | "opening";
+
 /**
- * AI 起书向导（对话式，整页覆盖层）：AI 策划多轮提问，信息够了自动产出草稿。
- * 覆盖层由 App 常驻挂载（关闭只是隐藏），对话与草稿不会因误点导航丢失；
- * 创建成功后 App 会重置本组件开始下一段对话。
+ * AI 起书向导（对话式，整页覆盖层）：左侧 AI 策划对话，右侧草稿面板
+ * （基础信息/设定/大纲/开篇流程 四个页签，全部可编辑）。
+ * 覆盖层常驻挂载（收起只是隐藏），会话自动存库归档。
  */
 export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed }: AICreateWizardProps) {
   const [messages, setMessages] = useState<UiMsg[]>([
@@ -89,6 +93,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<BootstrapDraft | null>(null);
+  const [draftTab, setDraftTab] = useState<DraftTab>("base");
   const [styles, setStyles] = useState<Style[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [history, setHistory] = useState<ChatSession[] | null>(null);
@@ -180,7 +185,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
     const content = text.trim();
     if (!content || busy) return;
     setError(null);
-    const history: ChatMsg[] = [...messages, { role: "user" as const, text: content }]
+    const historyMsgs: ChatMsg[] = [...messages, { role: "user" as const, text: content }]
       .map((m) => ({
         role: (m.role === "ai" ? "assistant" : "user") as "user" | "assistant",
         content: m.text,
@@ -195,7 +200,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
     setBusy(true);
     let acc = "";
     try {
-      await api.aiBootstrapChatStream(history, (ev) => {
+      await api.aiBootstrapChatStream(historyMsgs, (ev) => {
         if (ev.type === "delta") {
           acc += ev.text;
           const cur = acc;
@@ -231,9 +236,16 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
     setDraft({ ...draft, lore: draft.lore.filter((_, j) => j !== i) });
   };
 
+  const tabs: [DraftTab, string, number?][] = [
+    ["base", "基础信息"],
+    ["lore", "设定", draft?.lore.length],
+    ["outline", "大纲", draft?.outline?.length],
+    ["opening", "开篇流程", draft?.opening?.length],
+  ];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-canvas">
-      <div className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col px-10 pt-8 pb-6">
+      <div className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col px-8 pt-6 pb-5">
         <div className="flex items-center gap-2.5">
           <h1 className="text-[22px] font-bold tracking-tight text-ink">
             AI 辅助创建
@@ -311,194 +323,307 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
           </div>
         )}
 
-        {/* 对话区 */}
-        <div
-          ref={chatRef}
-          className="mt-4 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-2xl bg-surface p-5 shadow-card"
-        >
-          {messages.map((m, i) => (
+        {/* 左右分栏：对话 | 草稿 */}
+        <div className="mt-3 flex min-h-0 flex-1 gap-4">
+          {/* 左：对话 */}
+          <div className="flex min-w-0 flex-1 flex-col">
             <div
-              key={i}
-              className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 ${
-                m.role === "ai"
-                  ? "self-start bg-canvas text-body"
-                  : "self-end whitespace-pre-wrap bg-accent text-surface"
-              }`}
+              ref={chatRef}
+              className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-2xl bg-surface p-5 shadow-card"
             >
-              {m.role === "ai" ? (
-                m.text ? (
-                  <AiMarkdown text={m.text} />
-                ) : busy && i === messages.length - 1 ? (
-                  "…"
-                ) : null
-              ) : (
-                m.text
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* 输入区 */}
-        <div className="mt-3 flex shrink-0 gap-2">
-          <input
-            className="min-w-0 flex-1 rounded-[10px] bg-white/70 px-3 py-2.5 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
-            placeholder="回复策划，或补充你的想法…"
-            value={input}
-            disabled={busy}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void send(input)}
-          />
-          <button
-            disabled={busy || !input.trim()}
-            onClick={() => void send(input)}
-            className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
-          >
-            发送
-          </button>
-          <button
-            disabled={busy}
-            title="跳过问答，按现有信息直接出方案"
-            onClick={() => void send("信息够了，直接生成方案")}
-            className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
-          >
-            直接生成
-          </button>
-        </div>
-
-        {error && (
-          <p className="mt-3 shrink-0 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
-            {error}
-          </p>
-        )}
-
-        {/* 草稿编辑（对话产出后显示） */}
-        {draft && (
-          <div className="mt-4 shrink-0 rounded-2xl bg-surface p-5 shadow-card">
-            <div className="grid grid-cols-[72px_1fr] items-center gap-x-3 gap-y-3">
-              <span className="text-xs text-muted">书名</span>
-              <input
-                className="rounded-[10px] bg-canvas px-3 py-2 text-sm font-semibold text-ink outline-none focus:bg-surface2"
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              />
-              <span className="text-xs text-muted">题材标签</span>
-              <input
-                className="rounded-[10px] bg-canvas px-3 py-2 text-sm text-body outline-none focus:bg-surface2"
-                value={draft.description}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-              />
-              <span className="self-start pt-2 text-xs text-muted">作品简介</span>
-              <textarea
-                className="h-24 resize-none rounded-[10px] bg-canvas px-3 py-2 text-[13px] leading-6 text-body outline-none focus:bg-surface2"
-                value={draft.synopsis}
-                onChange={(e) => setDraft({ ...draft, synopsis: e.target.value })}
-              />
-              <span className="text-xs text-muted">字数目标</span>
-              <div className="flex items-center gap-2">
-                <input
-                  className="w-36 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
-                  placeholder="全书，如 200000"
-                  inputMode="numeric"
-                  value={draft.target_total_words || ""}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      target_total_words: parseInt(e.target.value, 10) || undefined,
-                    })
-                  }
-                />
-                <input
-                  className="w-36 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
-                  placeholder="每章，如 2000"
-                  inputMode="numeric"
-                  value={draft.target_chapter_words || ""}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      target_chapter_words: parseInt(e.target.value, 10) || undefined,
-                    })
-                  }
-                />
-                <span className="text-[11px] text-faint">可选</span>
-              </div>
-              {styles.length > 0 && (
-                <>
-                  <span className="text-xs text-muted">写作风格</span>
-                  <select
-                    className="w-64 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none focus:bg-surface2"
-                    value={draft.style_id ?? 0}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        style_id: parseInt(e.target.value, 10) || undefined,
-                      })
-                    }
-                  >
-                    <option value={0}>不指定（默认风格）</option>
-                    {styles.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-            </div>
-
-            <p className="mt-4 mb-2 text-xs font-semibold text-muted">
-              初始设定（{draft.lore.length} 条，进设定库）
-            </p>
-            <div className="flex max-h-44 flex-col gap-2 overflow-y-auto">
-              {draft.lore.map((l, i) => (
-                <div key={i} className="rounded-xl bg-canvas p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-accent-soft px-2 py-px text-[10px] font-medium text-accent">
-                      {l.category}
-                    </span>
-                    <span className="text-[13px] font-medium text-ink">{l.title}</span>
-                    {l.always_include && (
-                      <span className="rounded-full bg-pyellow px-2 py-px text-[10px] text-pyellow-t">
-                        常驻注入
-                      </span>
-                    )}
-                    <button
-                      className="ml-auto text-faint hover:text-pred-t"
-                      title="移除该词条"
-                      onClick={() => removeLore(i)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">
-                    {l.content}
-                  </p>
+              {messages.map((m, i) => (
+                <div
+                  key={i}
+                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 ${
+                    m.role === "ai"
+                      ? "self-start bg-canvas text-body"
+                      : "self-end whitespace-pre-wrap bg-accent text-surface"
+                  }`}
+                >
+                  {m.role === "ai" ? (
+                    m.text ? (
+                      <AiMarkdown text={m.text} />
+                    ) : busy && i === messages.length - 1 ? (
+                      "…"
+                    ) : null
+                  ) : (
+                    m.text
+                  )}
                 </div>
               ))}
             </div>
-
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-3 flex shrink-0 gap-2">
+              <input
+                className="min-w-0 flex-1 rounded-[10px] bg-white/70 px-3 py-2.5 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
+                placeholder="回复策划，或补充你的想法…"
+                value={input}
+                disabled={busy}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void send(input)}
+              />
               <button
-                className="rounded-full bg-accent px-5 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
-                onClick={() => onCreate(draft)}
+                disabled={busy || !input.trim()}
+                onClick={() => void send(input)}
+                className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
               >
-                创建作品
+                发送
               </button>
               <button
                 disabled={busy}
-                className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
-                onClick={() => void send("换个方向，再来一版")}
+                title="跳过问答，按现有信息直接出方案"
+                onClick={() => void send("信息够了，直接生成方案")}
+                className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
               >
-                换一版
-              </button>
-              <button
-                className="px-3 py-2 text-xs text-muted hover:text-body"
-                onClick={() => setDraft(null)}
-              >
-                继续聊
+                直接生成
               </button>
             </div>
+            {error && (
+              <p className="mt-3 shrink-0 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
+                {error}
+              </p>
+            )}
           </div>
-        )}
+
+          {/* 右：草稿面板（页签） */}
+          <div className="flex w-[400px] shrink-0 flex-col rounded-2xl bg-surface shadow-card">
+            <div className="flex shrink-0 gap-1 p-3 pb-0">
+              {tabs.map(([id, label, count]) => (
+                <button
+                  key={id}
+                  onClick={() => setDraftTab(id)}
+                  className={`rounded-full px-3 py-1.5 text-[12px] transition-colors ${
+                    draftTab === id
+                      ? "bg-accent-soft font-semibold text-accent"
+                      : "text-muted hover:text-body"
+                  }`}
+                >
+                  {label}
+                  {count != null && count > 0 ? ` ${count}` : ""}
+                </button>
+              ))}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {!draft ? (
+                <div className="flex h-full items-center justify-center px-6 text-center">
+                  <p className="text-[13px] leading-6 text-faint">
+                    聊着聊着，新书的草稿会出现在这里：
+                    <br />
+                    基础信息 / 初始设定 / 分卷大纲 / 开篇流程
+                  </p>
+                </div>
+              ) : draftTab === "base" ? (
+                <div className="flex flex-col gap-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-muted">书名</span>
+                    <input
+                      className="w-full rounded-[10px] bg-canvas px-3 py-2 text-sm font-semibold text-ink outline-none focus:bg-surface2"
+                      value={draft.name}
+                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-muted">题材标签</span>
+                    <input
+                      className="w-full rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none focus:bg-surface2"
+                      value={draft.description}
+                      onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-muted">作品简介</span>
+                    <textarea
+                      className="h-36 w-full resize-none rounded-[10px] bg-canvas px-3 py-2 text-[13px] leading-6 text-body outline-none focus:bg-surface2"
+                      value={draft.synopsis}
+                      onChange={(e) => setDraft({ ...draft, synopsis: e.target.value })}
+                    />
+                  </label>
+                  <div>
+                    <span className="mb-1 block text-xs text-muted">字数目标</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="w-32 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
+                        placeholder="全书"
+                        inputMode="numeric"
+                        value={draft.target_total_words || ""}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            target_total_words: parseInt(e.target.value, 10) || undefined,
+                          })
+                        }
+                      />
+                      <input
+                        className="w-32 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2"
+                        placeholder="每章"
+                        inputMode="numeric"
+                        value={draft.target_chapter_words || ""}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            target_chapter_words: parseInt(e.target.value, 10) || undefined,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  {styles.length > 0 && (
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-muted">写作风格</span>
+                      <select
+                        className="w-full rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none focus:bg-surface2"
+                        value={draft.style_id ?? 0}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            style_id: parseInt(e.target.value, 10) || undefined,
+                          })
+                        }
+                      >
+                        <option value={0}>不指定（默认风格）</option>
+                        {styles.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              ) : draftTab === "lore" ? (
+                <div className="flex flex-col gap-2">
+                  {draft.lore.map((l, i) => (
+                    <div key={i} className="rounded-xl bg-canvas p-3">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-accent-soft px-2 py-px text-[10px] font-medium text-accent">
+                          {l.category}
+                        </span>
+                        <span className="text-[13px] font-medium text-ink">{l.title}</span>
+                        {l.always_include && (
+                          <span className="rounded-full bg-pyellow px-2 py-px text-[10px] text-pyellow-t">
+                            常驻注入
+                          </span>
+                        )}
+                        <button
+                          className="ml-auto text-faint hover:text-pred-t"
+                          title="移除该词条"
+                          onClick={() => removeLore(i)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">
+                        {l.content}
+                      </p>
+                    </div>
+                  ))}
+                  {draft.lore.length === 0 && (
+                    <p className="py-6 text-center text-xs text-faint">无设定词条</p>
+                  )}
+                </div>
+              ) : draftTab === "outline" ? (
+                <div className="flex flex-col gap-2">
+                  {(draft.outline ?? []).map((o, i) => (
+                    <div key={i} className="rounded-xl bg-canvas p-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="min-w-0 flex-1 rounded-lg bg-surface px-2 py-1 text-[13px] font-medium text-ink outline-none"
+                          value={o.title}
+                          onChange={(e) => {
+                            const next = [...(draft.outline ?? [])];
+                            next[i] = { ...o, title: e.target.value };
+                            setDraft({ ...draft, outline: next });
+                          }}
+                        />
+                        <button
+                          className="text-faint hover:text-pred-t"
+                          title="移除该节点"
+                          onClick={() => {
+                            setDraft({
+                              ...draft,
+                              outline: (draft.outline ?? []).filter((_, j) => j !== i),
+                            });
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <textarea
+                        className="mt-1.5 h-16 w-full resize-none rounded-lg bg-surface px-2 py-1.5 text-xs leading-5 text-muted outline-none focus:text-body"
+                        value={o.content}
+                        onChange={(e) => {
+                          const next = [...(draft.outline ?? [])];
+                          next[i] = { ...o, content: e.target.value };
+                          setDraft({ ...draft, outline: next });
+                        }}
+                      />
+                    </div>
+                  ))}
+                  {(draft.outline ?? []).length === 0 && (
+                    <p className="py-6 text-center text-xs text-faint">
+                      草稿里没有大纲节点，可以叫策划补上
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {(draft.opening ?? []).map((line, i) => (
+                    <div key={i} className="flex items-start gap-2 rounded-xl bg-canvas p-2.5">
+                      <span className="mt-0.5 shrink-0 text-[10px] text-faint">
+                        {i + 1}
+                      </span>
+                      <textarea
+                        className="min-h-8 min-w-0 flex-1 resize-none rounded-lg bg-surface px-2 py-1 text-xs leading-5 text-body outline-none"
+                        value={line}
+                        rows={2}
+                        onChange={(e) => {
+                          const next = [...(draft.opening ?? [])];
+                          next[i] = e.target.value;
+                          setDraft({ ...draft, opening: next });
+                        }}
+                      />
+                      <button
+                        className="mt-0.5 text-faint hover:text-pred-t"
+                        title="移除"
+                        onClick={() => {
+                          setDraft({
+                            ...draft,
+                            opening: (draft.opening ?? []).filter((_, j) => j !== i),
+                          });
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {(draft.opening ?? []).length === 0 && (
+                    <p className="py-6 text-center text-xs text-faint">
+                      草稿里没有开篇流程，可以叫策划补上
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {draft && (
+              <div className="flex shrink-0 items-center gap-3 border-t border-line p-4">
+                <button
+                  className="rounded-full bg-accent px-5 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
+                  onClick={() => onCreate(draft)}
+                >
+                  创建作品
+                </button>
+                <button
+                  disabled={busy}
+                  className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
+                  onClick={() => void send("换个方向，再来一版")}
+                >
+                  换一版
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

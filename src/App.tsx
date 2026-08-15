@@ -149,9 +149,32 @@ export default function App() {
         await api.saveProjectInfo(p.id, draft.description, draft.synopsis);
         p.synopsis = draft.synopsis;
       }
+      // 开篇流程作为首个大纲节点（内容不进 prompt 注入，只是创作路标）
+      const opening = (draft.opening ?? []).filter((s) => s.trim());
+      if (opening.length > 0) {
+        const it = await api.addOutlineItem(
+          p.id,
+          `开篇流程（前 ${opening.length} 章）`
+        );
+        await api.saveOutlineItem(
+          it.id,
+          it.title,
+          opening.map((s, i) => `${i + 1}. ${s}`).join("\n")
+        );
+      }
+      // 分卷大纲节点
+      let outlineCount = 0;
+      for (const o of draft.outline ?? []) {
+        if (!o.title.trim()) continue;
+        const it = await api.addOutlineItem(p.id, o.title);
+        await api.saveOutlineItem(it.id, o.title, o.content);
+        outlineCount++;
+      }
       setProjects((prev) => [p, ...prev]);
       setCurrentProjectId(p.id);
-      showToast(`《${p.name}》已创建，含 ${draft.lore.length} 条初始设定`);
+      showToast(
+        `《${p.name}》已创建：${draft.lore.length} 条设定${outlineCount ? `、${outlineCount} 个大纲节点` : ""}`
+      );
     } catch (e) {
       showToast(`创建失败：${String(e)}`);
     }
