@@ -1595,3 +1595,34 @@ pub async fn ai_bootstrap_chat_stream(
         .await
         .map_err(|e| e.to_string())
 }
+
+// ---------- 起书会话归档 ----------
+
+/// 保存会话（id=None 新建），返回会话 id
+#[tauri::command]
+pub fn save_chat_session(
+    db: State<'_, Db>,
+    id: Option<i64>,
+    title: String,
+    messages: String,
+    draft: String,
+) -> Result<i64, String> {
+    db.save_chat_session(id, &title, &messages, &draft)
+        .map_err(|e| e.to_string())
+}
+
+/// 最近一条会话（进入向导恢复用）
+#[tauri::command]
+pub fn get_latest_chat_session(db: State<'_, Db>) -> Result<Option<db::ChatSession>, String> {
+    db.latest_chat_session().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_chat_sessions(db: State<'_, Db>) -> Result<Vec<db::ChatSession>, String> {
+    db.list_chat_sessions().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_chat_session(db: State<'_, Db>, id: i64) -> Result<(), String> {
+    db.delete_chat_session(id).map_err(|e| e.to_string())
+}

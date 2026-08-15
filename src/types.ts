@@ -112,6 +112,18 @@ export interface ChatMsg {
   content: string;
 }
 
+/** AI 起书会话归档 */
+export interface ChatSession {
+  id: number;
+  title: string;
+  /** 消息列表（JSON 字符串） */
+  messages: string;
+  /** 产出的草稿（JSON 字符串，空 = 未产出） */
+  draft: string;
+  created_at: number;
+  updated_at: number;
+}
+
 /** 大纲节点（分卷/情节节点） */
 export interface OutlineItem {
   id: number;

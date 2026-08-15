@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BootstrapChatReply, BootstrapDraft, Chapter, ChapterMeta, ChatMsg, CheckReportMeta, LoreEntry, OutlineItem, Project, Style, Task, Video, VideoDetail } from "../types";
+import type { BootstrapChatReply, BootstrapDraft, Chapter, ChapterMeta, ChatMsg, ChatSession, CheckReportMeta, LoreEntry, OutlineItem, Project, Style, Task, Video, VideoDetail } from "../types";
 
 /** 无边框窗口的自制标题栏控制 */
 const appWindow = getCurrentWindow();
@@ -424,6 +424,23 @@ export const api = {
     channel.onmessage = onEvent;
     return invoke<void>("ai_bootstrap_chat_stream", { messages, channel });
   },
+
+  /** 保存起书会话（id=null 新建），返回会话 id */
+  saveChatSession: (
+    id: number | null,
+    title: string,
+    messages: string,
+    draft: string
+  ) => invoke<number>("save_chat_session", { id, title, messages, draft }),
+
+  /** 最近一条会话（进入向导恢复用） */
+  getLatestChatSession: () =>
+    invoke<ChatSession | null>("get_latest_chat_session"),
+
+  listChatSessions: () => invoke<ChatSession[]>("list_chat_sessions"),
+
+  deleteChatSession: (id: number) =>
+    invoke<void>("delete_chat_session", { id }),
 
   /** AI 润色创意：一句话创意 → 更具体的创作 brief */
   aiPolishIdea: (idea: string) => invoke<string>("ai_polish_idea", { idea }),

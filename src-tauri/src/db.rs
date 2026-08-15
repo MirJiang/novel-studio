@@ -157,6 +157,19 @@ pub struct OutlineItem {
     pub updated_at: i64,
 }
 
+/// AI 起书的会话归档
+#[derive(Debug, Serialize, Clone)]
+pub struct ChatSession {
+    pub id: i64,
+    pub title: String,
+    /// 消息列表（JSON）
+    pub messages: String,
+    /// 产出的草稿（JSON，空串 = 未产出）
+    pub draft: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// 任务队列中的一条长任务（批量写章 / 视频镜头生成等）
 #[derive(Debug, Serialize, Clone)]
 pub struct Task {
@@ -404,6 +417,21 @@ impl Db {
             .context("迁移 v10 失败")?;
         }
         conn.pragma_update(None, "user_version", 10)?;
+        // v11：AI 起书会话归档（当前会话自动保存，旧会话可回看）
+        if version < 11 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS chat_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL DEFAULT '',
+                    messages TEXT NOT NULL DEFAULT '[]',
+                    draft TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );",
+            )
+            .context("迁移 v11 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 11)?;
         Ok(())
     }
 
@@ -1418,6 +1446,76 @@ impl Db {
             "DELETE FROM tasks WHERE status IN ('done', 'error', 'cancelled')",
             [],
         )?;
+        Ok(())
+    }
+
+    // ---------- AI 起书会话归档 ----------
+
+    /// 保存会话：id 为 None 新建，否则按 id 更新；返回会话 id
+    pub fn save_chat_session(
+        &self,
+        id: Option<i64>,
+        title: &str,
+        messages: &str,
+        draft: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let ts = now();
+        match id {
+            Some(sid) => {
+                conn.execute(
+                    "UPDATE chat_sessions SET title = ?1, messages = ?2, draft = ?3, updated_at = ?4 WHERE id = ?5",
+                    params![title, messages, draft, ts, sid],
+                )?;
+                Ok(sid)
+            }
+            None => {
+                conn.execute(
+                    "INSERT INTO chat_sessions (title, messages, draft, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?4)",
+                    params![title, messages, draft, ts],
+                )?;
+                Ok(conn.last_insert_rowid())
+            }
+        }
+    }
+
+    fn row_to_chat_session(r: &rusqlite::Row) -> rusqlite::Result<ChatSession> {
+        Ok(ChatSession {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            messages: r.get(2)?,
+            draft: r.get(3)?,
+            created_at: r.get(4)?,
+            updated_at: r.get(5)?,
+        })
+    }
+
+    /// 最近的一条会话（进入向导时恢复）
+    pub fn latest_chat_session(&self) -> Result<Option<ChatSession>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, messages, draft, created_at, updated_at
+             FROM chat_sessions ORDER BY updated_at DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map([], Self::row_to_chat_session)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// 全部会话（新→旧，归档列表用）
+    pub fn list_chat_sessions(&self) -> Result<Vec<ChatSession>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, messages, draft, created_at, updated_at
+             FROM chat_sessions ORDER BY updated_at DESC LIMIT 50",
+        )?;
+        let rows = stmt.query_map([], Self::row_to_chat_session)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete_chat_session(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM chat_sessions WHERE id = ?1", params![id])?;
         Ok(())
     }
 }

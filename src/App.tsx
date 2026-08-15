@@ -45,6 +45,7 @@ export default function App() {
   const [wizardOpen, setWizardOpen] = useState(false); // AI 起书向导（覆盖层，常驻挂载不丢对话）
   const [wizardEverOpened, setWizardEverOpened] = useState(false);
   const [wizardEpoch, setWizardEpoch] = useState(0); // 创建成功后 +1 重置对话
+  const [wizardFresh, setWizardFresh] = useState(false); // 重置后首挂跳过会话恢复
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -717,10 +718,13 @@ export default function App() {
         >
           <AICreateWizard
             key={wizardEpoch}
+            startFresh={wizardFresh}
+            onFreshConsumed={() => setWizardFresh(false)}
             onCancel={() => setWizardOpen(false)}
             onCreate={(draft) => {
               setWizardOpen(false);
-              setWizardEpoch((e) => e + 1); // 重置对话，下一本从干净的策划开始
+              setWizardFresh(true); // 这本书的会话留在历史归档，下一本从干净会话开始
+              setWizardEpoch((e) => e + 1);
               void handleAiCreate(draft);
             }}
           />
