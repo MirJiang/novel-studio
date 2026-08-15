@@ -225,3 +225,13 @@
   开窗口扫码登录 → 用户拖入成片 mp4（文件选择框受浏览器安全限制，JS/Eval 无法自动设置，
   Playwright 是靠 CDP setFileInputFiles 实现的，我们不引 CDP）→ eval 填充标题+话题标签 → 人工发布
 - 番茄/抖音两个发布窗口共用 open_site_window + eval_and_read（location.hash 回读）一套机制
+
+## D24. 网文方法论内置进 prompt（源自 chinese-webnovel-skill）
+
+- 社区 skill（tomsawyerhu/chinese-webnovel-skill，605 星）不作为 skill 安装，
+  而是把方法论蒸馏进应用内置 prompt——用户零配置，全中文，按我们的功能点裁剪
+- 落点：SYSTEM_PROMPT（续写/批量写章：每章四件事、章内结构、场景规则、章末留后劲、去 AI 味硬规则）、
+  TRANSFORM_SYSTEM_PROMPT（划词三件套：语言硬要求）、BOOTSTRAP_SYSTEM（起书：选材判断/hook 标准）、
+  generate_outline（分卷四要素：卷目标/核心冲突/高潮兑现/卷末变化）、
+  CHECK_SYSTEM_PROMPT（体检新增第五类：节奏与水章）
+- 原 skill 的"检索本地语料模仿"环节没搬——我们的对应物是风格库（用户自己的样本蒸馏），更干净
