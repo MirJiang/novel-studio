@@ -168,8 +168,21 @@ pub fn retry_task(db: State<'_, Db>, id: i64) -> Result<Task, String> {
     {
         return Err("已有同类任务在队列中".to_string());
     }
+    // 批量写章按已完成进度扣减：写 10 章在第 3 章失败，重试只补剩余 8 章
+    //（progress_current 在失败时停在上次推进的位置；"写完整本书"类 count<=0 每次重算，无需调整）
+    let mut payload = t.payload.clone();
+    if t.kind == "batch_chapters" && t.progress_current > 0 {
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&t.payload) {
+            let orig = v["chapter_count"].as_i64().unwrap_or(0);
+            if orig > 0 {
+                let remaining = (orig - t.progress_current).max(1);
+                v["chapter_count"] = serde_json::json!(remaining);
+                payload = v.to_string();
+            }
+        }
+    }
     let nt = db
-        .create_task(t.project_id, &t.kind, &t.label, &t.payload)
+        .create_task(t.project_id, &t.kind, &t.label, &payload)
         .map_err(|e| e.to_string())?;
     notify().notify_one();
     Ok(nt)

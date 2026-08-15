@@ -805,16 +805,7 @@ async fn summarize_chapter_text(
     if plain.trim().is_empty() {
         return Err(format!("《{title}》还没有内容，无法生成摘要"));
     }
-    // 长章截断：开头 + 结尾，兼顾主线与结局
-    let excerpt = if plain.chars().count() > 6000 {
-        format!(
-            "{}\n……（中段略）……\n{}",
-            head_chars(plain, 3500),
-            tail_chars(plain, 2000)
-        )
-    } else {
-        plain.to_string()
-    };
+    let excerpt = chapter_excerpt(plain);
 
     llm::chat_once(
         cfg.clone(),
@@ -833,6 +824,71 @@ async fn summarize_chapter_text(
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+/// 长章截断：开头 + 结尾，兼顾主线与结局
+fn chapter_excerpt(plain: &str) -> String {
+    if plain.chars().count() > 6000 {
+        format!(
+            "{}\n……（中段略）……\n{}",
+            head_chars(plain, 3500),
+            tail_chars(plain, 2000)
+        )
+    } else {
+        plain.to_string()
+    }
+}
+
+/// 批量写章用：章节名 + 摘要一次 LLM 调用产出。
+/// 返回 (完整章节名, 摘要)；失败回退为 (序号标题, "")
+async fn chapter_title_and_summary(
+    cfg: &LlmConfig,
+    fallback_title: &str,
+    plain: &str,
+) -> (String, String) {
+    if plain.trim().is_empty() {
+        return (fallback_title.to_string(), String::new());
+    }
+    let excerpt = chapter_excerpt(plain);
+    let resp = llm::chat_once(
+        cfg.clone(),
+        vec![
+            (
+                "system".to_string(),
+                "你是小说编辑。阅读章节内容，只输出两行：\n\
+                第一行：本章标题（2~10 个汉字，概括本章最大看点，不要“第X章”前缀，不要书名号）\n\
+                第二行：本章摘要（150 字以内：主要情节推进、人物状态变化、埋下的伏笔）\n\
+                只输出这两行，不要其他任何内容。"
+                    .to_string(),
+            ),
+            ("user".to_string(), format!("【章节内容】\n{excerpt}")),
+        ],
+    )
+    .await;
+
+    let Ok(text) = resp else {
+        return (fallback_title.to_string(), String::new());
+    };
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let name = lines
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("标题")
+        .trim_matches(|c| c == '：' || c == ':' || c == ' ')
+        .trim();
+    let summary = lines
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_start_matches("摘要")
+        .trim_matches(|c| c == '：' || c == ':' || c == ' ')
+        .trim()
+        .to_string();
+    let title = if name.is_empty() || name.chars().count() > 20 {
+        fallback_title.to_string()
+    } else {
+        format!("{fallback_title} · {name}")
+    };
+    (title, summary)
 }
 
 /// 批量补齐缺失的摘要（带进度事件）
@@ -1006,9 +1062,10 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         } else {
             format!("【前文】\n{context_tail}")
         };
+        let max_words = wpc * 3 / 2;
         let user = format!(
             "{summary_block}{outline_block}{prev_block}\n\n【本章要求】\n本章为《{title}》。\
-            自然衔接上文，直接创作本章完整正文，篇幅约 {wpc} 字。\
+            自然衔接上文，直接创作本章完整正文，篇幅约 {wpc} 字（不要超过 {max_words} 字）。\
             章末停在变化发生的那一拍（新危机/被迫选择/真相一角/关系变化/爽点预告），留后劲。"
         );
 
@@ -1025,18 +1082,17 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         let chapter = db
             .create_chapter(project_id, &title)
             .map_err(|e| e.to_string())?;
-        db.save_chapter(chapter.id, &title, &text_to_html(&text))
-            .map_err(|e| format!("《{title}》保存失败（已完成 {i} 章）: {e}"))?;
+        let html = text_to_html(&text);
+        let plain = db::html_to_text(&html);
 
-        // 立即生成摘要，保证下一章的前情摘要链不断；失败不中断（后续可批量补齐）
-        let plain = db::html_to_text(&text_to_html(&text));
-        let summary = summarize_chapter_text(&cfg, &title, &plain)
-            .await
-            .unwrap_or_default();
+        // 章节名 + 摘要一次产出（失败就用序号标题、摘要留空，不中断流程）
+        let (chapter_title, summary) = chapter_title_and_summary(&cfg, &title, &plain).await;
+        db.save_chapter(chapter.id, &chapter_title, &html)
+            .map_err(|e| format!("《{title}》保存失败（已完成 {i} 章）: {e}"))?;
         if !summary.is_empty() {
             let _ = db.save_summary(chapter.id, &summary);
         }
-        written.push((title.clone(), summary));
+        written.push((chapter_title.clone(), summary));
     }
 
     // 大纲自动推进：让 LLM 判断本次内容覆盖到第几个节点，标 done（失败静默跳过）
