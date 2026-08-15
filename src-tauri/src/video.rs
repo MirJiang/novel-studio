@@ -182,12 +182,96 @@ pub struct ComposeShot {
     pub text: String,
 }
 
-/// 合成竖屏短片：逐镜视频段（真视频或静图推近）→ 拼接 → 配音轨 → 烧录字幕
-pub fn compose(video_dir: &Path, shots: &[ComposeShot], out_path: &Path) -> Result<()> {
+/// 合成的可选素材：BGM（循环垫底混音）+ 片头片尾（图片或 mp4）
+#[derive(Default)]
+pub struct ComposeExtras {
+    pub bgm: Option<PathBuf>,
+    /// BGM 音量百分比（相对配音轨）
+    pub bgm_volume: i64,
+    pub intro: Option<PathBuf>,
+    pub outro: Option<PathBuf>,
+}
+
+fn is_image(p: &Path) -> bool {
+    p.extension()
+        .map(|e| ["png", "jpg", "jpeg", "webp"].contains(&e.to_string_lossy().as_ref()))
+        .unwrap_or(false)
+}
+
+/// 把片头/片尾素材标准化成统一视频段（1080x1920 30fps 无声），返回 (段文件名, 时长 ms)
+fn normalize_segment(
+    ffmpeg: &Path,
+    src: &Path,
+    seg_name: &str,
+    video_dir: &Path,
+) -> Result<i64> {
+    let vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p";
+    if is_image(src) {
+        let secs = 2.5_f64;
+        run_tool(
+            ffmpeg,
+            &[
+                "-loop".into(),
+                "1".into(),
+                "-i".into(),
+                src.to_string_lossy().to_string(),
+                "-vf".into(),
+                vf.into(),
+                "-an".into(),
+                "-c:v".into(),
+                "libx264".into(),
+                "-preset".into(),
+                "veryfast".into(),
+                "-crf".into(),
+                "20".into(),
+                "-t".into(),
+                format!("{secs:.3}"),
+                "-y".into(),
+                seg_name.into(),
+            ],
+            video_dir,
+        )?;
+        Ok((secs * 1000.0) as i64)
+    } else {
+        run_tool(
+            ffmpeg,
+            &[
+                "-i".into(),
+                src.to_string_lossy().to_string(),
+                "-vf".into(),
+                vf.into(),
+                "-an".into(),
+                "-c:v".into(),
+                "libx264".into(),
+                "-preset".into(),
+                "veryfast".into(),
+                "-crf".into(),
+                "20".into(),
+                "-y".into(),
+                seg_name.into(),
+            ],
+            video_dir,
+        )?;
+        probe_duration_ms(&video_dir.join(seg_name))
+    }
+}
+
+/// 合成竖屏短片：片头 → 逐镜视频段（真视频或静图推近）→ 片尾 → 配音轨(+BGM) → 烧录字幕
+pub fn compose(
+    video_dir: &Path,
+    shots: &[ComposeShot],
+    out_path: &Path,
+    extras: &ComposeExtras,
+) -> Result<()> {
     let ffmpeg = find_tool("ffmpeg")?;
 
-    // 1. 逐镜生成视频段（1080x1920 30fps）：有镜头视频就循环对齐时长，没有就静图缓慢推近
+    // 1. 逐镜生成视频段（片头/片尾如有则拼在首尾）
     let mut seg_names = Vec::new();
+    let mut intro_ms = 0i64;
+    if let Some(intro) = &extras.intro {
+        intro_ms = normalize_segment(&ffmpeg, intro, "seg-intro.mp4", video_dir)?;
+        seg_names.push("seg-intro.mp4".to_string());
+    }
     for (i, s) in shots.iter().enumerate() {
         let seg = format!("seg-{i:02}.mp4");
         let secs = (s.duration_ms.max(800) as f64) / 1000.0;
@@ -249,6 +333,21 @@ pub fn compose(video_dir: &Path, shots: &[ComposeShot], out_path: &Path) -> Resu
         }
         seg_names.push(seg);
     }
+    if let Some(outro) = &extras.outro {
+        normalize_segment(&ffmpeg, outro, "seg-outro.mp4", video_dir)?;
+        seg_names.push("seg-outro.mp4".to_string());
+    }
+
+    // 总时长 = 片头 + 各镜（按配音时长）+ 片尾
+    let shots_ms: i64 = shots.iter().map(|s| s.duration_ms.max(800)).sum();
+    let total_ms = intro_ms
+        + shots_ms
+        + if extras.outro.is_some() {
+            probe_duration_ms(&video_dir.join("seg-outro.mp4")).unwrap_or(0)
+        } else {
+            0
+        };
+    let total_secs = (total_ms as f64) / 1000.0;
 
     // 2. 拼接视频段
     let vlist = seg_names
@@ -285,7 +384,7 @@ pub fn compose(video_dir: &Path, shots: &[ComposeShot], out_path: &Path) -> Resu
         video_dir,
     )?;
 
-    // 4. 字幕（按各镜音频实际时长排时间轴）
+    // 4. 字幕（按各镜音频实际时长排时间轴；有片头则整体后移）
     let mut ass = String::from(
         "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n\
          [V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, \
@@ -294,7 +393,7 @@ pub fn compose(video_dir: &Path, shots: &[ComposeShot], out_path: &Path) -> Resu
          Style: Default,Microsoft YaHei,58,&H00FFFFFF,&H00141414,&H64000000,1,0,0,0,100,100,0,0,1,4,2,2,60,60,120,1\n\n\
          [Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
     );
-    let mut cursor = 0i64;
+    let mut cursor = intro_ms;
     for s in shots {
         let dur = s.duration_ms.max(800);
         ass.push_str(&format!(
@@ -307,20 +406,61 @@ pub fn compose(video_dir: &Path, shots: &[ComposeShot], out_path: &Path) -> Resu
     }
     std::fs::write(video_dir.join("subtitles.ass"), ass)?;
 
-    // 5. 合成终片（烧字幕，-shortest 对齐音画）
-    run_tool(
-        &ffmpeg,
-        &[
-            "-i".into(), "video-only.mp4".into(),
-            "-i".into(), "full-audio.mp3".into(),
-            "-vf".into(), "ass=subtitles.ass".into(),
-            "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(), "-crf".into(), "20".into(),
-            "-c:a".into(), "aac".into(), "-b:a".into(), "128k".into(),
-            "-shortest".into(), "-y".into(),
-            out_path.to_string_lossy().to_string(),
-        ],
-        video_dir,
-    )?;
+    // 5. 合成终片：烧字幕 + 配音轨延迟到片头之后/补齐到总长 + 可选 BGM 垫底混音
+    //    注意 -vf 和 -filter_complex 不能同时用于同一视频流，字幕进 filter_complex
+    let vol = (extras.bgm_volume.clamp(1, 100) as f64) / 100.0;
+    let voice_chain = format!(
+        "[1:a]adelay={intro_ms}|{intro_ms},apad=whole_dur={total_secs:.3}[vo]"
+    );
+    let (filter, audio_map, extra_input): (String, &str, Vec<String>) = match &extras.bgm {
+        Some(bgm) => (
+            format!(
+                "[0:v]ass=subtitles.ass[v];{voice_chain};[2:a]volume={vol:.2},atrim=0:{total_secs:.3}[bg];[vo][bg]amix=inputs=2:duration=longest:dropout_transition=0[a]"
+            ),
+            "[a]",
+            vec![
+                "-stream_loop".into(),
+                "-1".into(),
+                "-i".into(),
+                bgm.to_string_lossy().to_string(),
+            ],
+        ),
+        None => (
+            format!("[0:v]ass=subtitles.ass[v];{voice_chain}[a]"),
+            "[a]",
+            Vec::new(),
+        ),
+    };
+    let mut args: Vec<String> = vec![
+        "-i".into(),
+        "video-only.mp4".into(),
+        "-i".into(),
+        "full-audio.mp3".into(),
+    ];
+    args.extend(extra_input);
+    args.extend([
+        "-filter_complex".into(),
+        filter,
+        "-map".into(),
+        "[v]".into(),
+        "-map".into(),
+        audio_map.into(),
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "veryfast".into(),
+        "-crf".into(),
+        "20".into(),
+        "-c:a".into(),
+        "aac".into(),
+        "-b:a".into(),
+        "128k".into(),
+        "-t".into(),
+        format!("{total_secs:.3}"),
+        "-y".into(),
+        out_path.to_string_lossy().to_string(),
+    ]);
+    run_tool(&ffmpeg, &args, video_dir)?;
     Ok(())
 }
 

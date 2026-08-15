@@ -118,6 +118,41 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
     }
   };
 
+  // ---------- BGM / 片头片尾 ----------
+
+  /** 保存 extras（BGM/片头/片尾/音量），保存后刷新 detail */
+  const saveExtras = async (patch: {
+    bgmPath?: string;
+    bgmVolume?: number;
+    introPath?: string;
+    outroPath?: string;
+  }) => {
+    if (!detail) return;
+    const v = detail.video;
+    try {
+      await api.setVideoExtras(
+        v.id,
+        patch.bgmPath ?? v.bgm_path,
+        patch.bgmVolume ?? v.bgm_volume,
+        patch.introPath ?? v.intro_path,
+        patch.outroPath ?? v.outro_path
+      );
+      await loadDetail(v.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const pickExtra = async (
+    kind: "bgm" | "intro" | "outro"
+  ) => {
+    const path = kind === "bgm" ? await api.pickAudio() : await api.pickMedia();
+    if (!path) return;
+    if (kind === "bgm") await saveExtras({ bgmPath: path });
+    else if (kind === "intro") await saveExtras({ introPath: path });
+    else await saveExtras({ outroPath: path });
+  };
+
   /** 单镜重跑视频 */
   const rerunShotVideo = async (shot: VideoShot) => {
     if (shotBusy != null) return;
@@ -398,6 +433,46 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
 
             {/* 第三步：执行 */}
             <Section title="③ 执行">
+              {/* BGM / 片头片尾 */}
+              <div className="mb-2.5 flex flex-col gap-1.5 rounded-xl bg-canvas p-3">
+                <ExtrasRow
+                  label="BGM"
+                  path={detail.video.bgm_path}
+                  onPick={() => void pickExtra("bgm")}
+                  onClear={() => void saveExtras({ bgmPath: "" })}
+                />
+                {detail.video.bgm_path && (
+                  <div className="flex items-center gap-2 pl-1">
+                    <span className="text-[10px] text-faint">音量</span>
+                    <input
+                      type="range"
+                      min={5}
+                      max={50}
+                      value={detail.video.bgm_volume}
+                      onChange={(e) =>
+                        void saveExtras({ bgmVolume: parseInt(e.target.value, 10) })
+                      }
+                      className="h-1 w-28 accent-[#007AFF]"
+                    />
+                    <span className="text-[10px] text-faint">
+                      {detail.video.bgm_volume}%
+                    </span>
+                  </div>
+                )}
+                <ExtrasRow
+                  label="片头"
+                  path={detail.video.intro_path}
+                  onPick={() => void pickExtra("intro")}
+                  onClear={() => void saveExtras({ introPath: "" })}
+                />
+                <ExtrasRow
+                  label="片尾"
+                  path={detail.video.outro_path}
+                  onPick={() => void pickExtra("outro")}
+                  onClear={() => void saveExtras({ outroPath: "" })}
+                />
+              </div>
+
               <div className="flex flex-col gap-2">
                 <StageButton
                   label="补齐配图"
@@ -474,6 +549,46 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
         selectedShot={selectedShot}
         thumbUrls={thumbUrls}
       />
+    </div>
+  );
+}
+
+function ExtrasRow({
+  label,
+  path,
+  onPick,
+  onClear,
+}: {
+  label: string;
+  path: string;
+  onPick: () => void;
+  onClear: () => void;
+}) {
+  const fileName = path ? (path.split(/[\\/]/).pop() ?? path) : "";
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-8 text-[11px] text-muted">{label}</span>
+      <button
+        onClick={onPick}
+        className="rounded-full bg-white/80 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-surface"
+      >
+        {path ? "更换" : "选择"}
+      </button>
+      {path && (
+        <>
+          <span className="min-w-0 flex-1 truncate text-[10px] text-faint">
+            {fileName}
+          </span>
+          <button
+            title="清除"
+            onClick={onClear}
+            className="text-faint hover:text-pred-t"
+          >
+            ×
+          </button>
+        </>
+      )}
+      {!path && <span className="text-[10px] text-faint">未设置</span>}
     </div>
   );
 }

@@ -205,3 +205,23 @@
 - 合成：镜头有 video_path 就 -stream_loop 循环对齐配音时长再 concat（不再 zoompan），
   混跑兼容——静图镜头仍走老路
 - 模式按视频任务选择（videos.mode：image 免费静图 / video 计费），默认静图防误触费钱
+
+## D22. 视频 BGM / 片头片尾：合成期混音与拼接
+
+- 素材存 videos 表（v10：bgm_path/bgm_volume/intro_path/outro_path），
+  set_video_extras 把用户选的文件拷进视频产物目录（防原文件被移动；自拷贝检测防截断）
+- BGM：-stream_loop -1 循环 + volume 压底（默认 15%）+ amix 与配音轨混合；
+  配音轨 adelay 让过片头、apad 补齐到总长；输出显式 -t 总时长（替代 -shortest，
+  否则片尾段会被配音轨长度截掉）
+- 片头片尾：图片 → 2.5s 静帧段；mp4 → 直接标准化；统一 scale/crop 到 1080x1920 30fps 进 concat 列表
+- -vf 与 -filter_complex 不能同用于一路流，字幕 ass 滤镜收进 filter_complex 统一编排
+
+## D23. 视频分发：红果发不了，走抖音 fill-only
+
+- 调研结论：红果短剧无个人 UGC 上传入口、无 API——内容机构版权方供给制
+  （成片上架要备案号+版权材料，入口 www.shortdramas.com 面向版权方/编剧，不收单条视频）
+- 小说推文视频的官方链路：番茄达人中心（kol.fanqieopen.com）接任务 → 发抖音挂锚点 → 回填结算
+- 所以视频分发做抖音创作者中心（creator.douyin.com）的 fill-only：
+  开窗口扫码登录 → 用户拖入成片 mp4（文件选择框受浏览器安全限制，JS/Eval 无法自动设置，
+  Playwright 是靠 CDP setFileInputFiles 实现的，我们不引 CDP）→ eval 填充标题+话题标签 → 人工发布
+- 番茄/抖音两个发布窗口共用 open_site_window + eval_and_read（location.hash 回读）一套机制

@@ -109,6 +109,22 @@ export const api = {
       filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp"] }],
     }),
 
+  /** 选择音频文件（BGM），取消返回 null */
+  pickAudio: () =>
+    open({
+      multiple: false,
+      filters: [{ name: "音频", extensions: ["mp3", "wav", "m4a", "aac", "ogg"] }],
+    }),
+
+  /** 选择片头/片尾素材（视频或图片），取消返回 null */
+  pickMedia: () =>
+    open({
+      multiple: false,
+      filters: [
+        { name: "视频或图片", extensions: ["mp4", "mov", "png", "jpg", "jpeg", "webp"] },
+      ],
+    }),
+
   createChapter: (projectId: number, title: string) =>
     invoke<Chapter>("create_chapter", { projectId, title }),
 
@@ -319,6 +335,22 @@ export const api = {
   generateShotVideo: (shotId: number) =>
     invoke<void>("generate_shot_video", { shotId }),
 
+  /** 设置 BGM/片头片尾（空串 = 清除；文件会被拷入视频目录） */
+  setVideoExtras: (
+    videoId: number,
+    bgmPath: string,
+    bgmVolume: number,
+    introPath: string,
+    outroPath: string
+  ) =>
+    invoke<void>("set_video_extras", {
+      videoId,
+      bgmPath,
+      bgmVolume,
+      introPath,
+      outroPath,
+    }),
+
   generateMissingImages: (
     videoId: number,
     onEvent: (event: ProgressEvent) => void
@@ -367,6 +399,13 @@ export const api = {
   /** 把章节填进后台当前编辑页（只填不发布），返回结果说明 */
   fillChapterDraft: (chapterId: number) =>
     invoke<string>("fill_chapter_draft", { chapterId }),
+
+  /** 打开/聚焦抖音创作者中心上传页（首次需扫码登录） */
+  openDouyinWindow: () => invoke<void>("open_douyin_window"),
+
+  /** 把视频文案（标题+话题）填进抖音上传页（视频文件人工拖入） */
+  fillDouyinCaption: (videoId: number) =>
+    invoke<string>("fill_douyin_caption", { videoId }),
 
   /** AI 起书：一句话创意 → 书名/简介/初始设定草稿 */
   aiBootstrapDraft: (idea: string) =>

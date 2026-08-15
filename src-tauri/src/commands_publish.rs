@@ -16,24 +16,32 @@ use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 const FANQIE_HOME: &str = "https://fanqienovel.com/main/writer/?enter_from=author_zone";
 const WIN_LABEL: &str = "fanqie-pub";
 
-/// 打开（或聚焦）番茄作家后台窗口。
-/// 首次使用需扫码登录，WebView2 会持久化 cookie（免登）。
-#[tauri::command]
-pub async fn open_fanqie_window(app: AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window(WIN_LABEL) {
+// 抖音创作者中心-发布视频页（红果短剧无个人上传通道，小说推文视频官方分发渠道是抖音）
+const DOUYIN_UPLOAD: &str = "https://creator.douyin.com/creator-micro/content/upload";
+const DOUYIN_WIN_LABEL: &str = "douyin-pub";
+
+/// 打开（或聚焦）外部站点窗口：已存在则聚焦，不存在则创建。
+/// WebView2 会持久化 cookie（扫码登录一次免登）。
+async fn open_site_window(
+    app: &AppHandle,
+    label: &str,
+    url: &str,
+    title: &str,
+) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(label) {
         let _ = w.unminimize();
         w.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
     }
     let win = WebviewWindowBuilder::new(
-        &app,
-        WIN_LABEL,
-        WebviewUrl::External(FANQIE_HOME.parse().map_err(|e| format!("{e}"))?),
+        app,
+        label,
+        WebviewUrl::External(url.parse().map_err(|e| format!("{e}"))?),
     )
-    .title("番茄作家后台 · Novel Studio 发布助手")
+    .title(title)
     .inner_size(1100.0, 800.0)
     .build()
-    .map_err(|e| format!("创建发布窗口失败: {e}"))?;
+    .map_err(|e| format!("创建窗口失败: {e}"))?;
 
     // WebView2 第二窗口在 Windows 上偶发黑屏（控制器 bounds 没同步），轻微 resize 强制重排
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -43,6 +51,30 @@ pub async fn open_fanqie_window(app: AppHandle) -> Result<(), String> {
     }
     let _ = win.set_focus();
     Ok(())
+}
+
+/// 打开（或聚焦）番茄作家后台窗口。
+#[tauri::command]
+pub async fn open_fanqie_window(app: AppHandle) -> Result<(), String> {
+    open_site_window(
+        &app,
+        WIN_LABEL,
+        FANQIE_HOME,
+        "番茄作家后台 · Novel Studio 发布助手",
+    )
+    .await
+}
+
+/// 打开（或聚焦）抖音创作者中心的发布视频页
+#[tauri::command]
+pub async fn open_douyin_window(app: AppHandle) -> Result<(), String> {
+    open_site_window(
+        &app,
+        DOUYIN_WIN_LABEL,
+        DOUYIN_UPLOAD,
+        "抖音创作者中心 · Novel Studio 发布助手",
+    )
+    .await
 }
 
 /// 填充脚本：把章节标题/正文填进番茄的章节编辑页。
@@ -117,6 +149,29 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// eval 注入脚本，稍等后从 location.hash 回读结果（#nsfill={json}），读不到返回 None
+async fn eval_and_read(
+    app: &AppHandle,
+    label: &str,
+    script: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let w = app
+        .get_webview_window(label)
+        .ok_or("发布窗口未打开，请先打开对应平台的后台窗口")?;
+    w.eval(&script).map_err(|e| format!("注入脚本失败: {e}"))?;
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let url_str = w.url().map(|u| u.to_string()).unwrap_or_default();
+    match url_str.find("#nsfill=") {
+        Some(pos) => {
+            let decoded = percent_decode(&url_str[pos + 8..]);
+            let v: serde_json::Value =
+                serde_json::from_str(&decoded).map_err(|e| format!("解析填充结果失败: {e}"))?;
+            Ok(Some(v))
+        }
+        None => Ok(None),
+    }
+}
+
 /// 把指定章节填充到番茄后台当前打开的章节编辑页（只填不发布）
 ///
 /// 必须是 async：同步命令跑在主线程上，里面的 sleep 会冻结事件循环，
@@ -135,30 +190,115 @@ pub async fn fill_chapter_draft(
     if text.trim().is_empty() {
         return Err("该章节还没有内容".to_string());
     }
-    let w = app
-        .get_webview_window(WIN_LABEL)
-        .ok_or("发布窗口未打开，请先点「打开番茄作家后台」")?;
-
     let script = FILL_SCRIPT
         .replace("__TITLE__", &serde_json::to_string(&title).unwrap())
         .replace("__CONTENT__", &serde_json::to_string(&text).unwrap());
-    w.eval(&script).map_err(|e| format!("注入脚本失败: {e}"))?;
-
-    // eval 无返回值：脚本把结果写进 location.hash，稍等后回读
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-    let url_str = w.url().map(|u| u.to_string()).unwrap_or_default();
-    if let Some(pos) = url_str.find("#nsfill=") {
-        let decoded = percent_decode(&url_str[pos + 8..]);
-        let v: serde_json::Value =
-            serde_json::from_str(&decoded).map_err(|e| format!("解析填充结果失败: {e}"))?;
-        let message = v["message"].as_str().unwrap_or("未知结果").to_string();
-        if v["ok"].as_bool() == Some(true) {
-            Ok(message)
-        } else {
-            Err(message)
+    match eval_and_read(&app, WIN_LABEL, script).await? {
+        Some(v) => {
+            let message = v["message"].as_str().unwrap_or("未知结果").to_string();
+            if v["ok"].as_bool() == Some(true) {
+                Ok(message)
+            } else {
+                Err(message)
+            }
         }
+        None => Ok("填充指令已发送，请查看后台窗口确认".to_string()),
+    }
+}
+
+/// 抖音填充脚本：把视频标题 + 话题文案填进创作者中心上传页。
+/// 文件选择框无法通过页面 JS 自动设置（浏览器安全限制），视频由用户拖入。
+/// ★ 抖音后台改版先改这里的选择器候选表。
+const DOUYIN_FILL_SCRIPT: &str = r#"(function(){
+  var R = {ok:false, message:""};
+  function done(){
+    try {
+      var u = new URL(location.href);
+      u.hash = "nsfill=" + encodeURIComponent(JSON.stringify(R));
+      history.replaceState(null, "", u.toString());
+      setTimeout(function(){
+        history.replaceState(null, "", location.pathname + location.search);
+      }, 2500);
+    } catch(e){}
+  }
+  try {
+    if (!location.host.includes("douyin.com")) {
+      R.message = "当前窗口不在抖音创作者中心"; return done();
+    }
+    // ---- 选择器候选表（后台改版先改这里）----
+    var titleEl = document.querySelector(
+      'input[placeholder*="标题"], input[placeholder*="作品"]'
+    );
+    var bodyEl = document.querySelector(
+      '[contenteditable="true"], textarea[placeholder*="简介"], textarea[placeholder*="描述"]'
+    );
+    // --------------------------------------
+    if (!bodyEl) {
+      R.message = "没找到文案输入区：请先在上传页拖入视频（上传后才会出现文案区）";
+      return done();
+    }
+    var filled = [];
+    if (titleEl) {
+      var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(titleEl, __TITLE__);
+      titleEl.dispatchEvent(new Event("input", {bubbles:true}));
+      titleEl.dispatchEvent(new Event("change", {bubbles:true}));
+      filled.push("标题");
+    }
+    bodyEl.focus();
+    if (bodyEl.tagName === "TEXTAREA") {
+      var tsetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      tsetter.call(bodyEl, __CAPTION__);
     } else {
-        // 没读到回传（页面在导航/脚本被拦），不当作硬失败
-        Ok("填充指令已发送，请查看后台窗口确认".to_string())
+      bodyEl.innerText = __CAPTION__;
+    }
+    bodyEl.dispatchEvent(new Event("input", {bubbles:true}));
+    filled.push("文案");
+    R.ok = true;
+    R.message = "已填充" + filled.join("和") + "，请核对后手动发布";
+    done();
+  } catch (e) {
+    R.message = "填充异常: " + e.message;
+    done();
+  }
+})();"#;
+
+/// 把视频文案（标题 + 话题标签）填充到抖音上传页（视频文件人工拖入，发布人工点）
+#[tauri::command]
+pub async fn fill_douyin_caption(
+    app: AppHandle,
+    db: State<'_, Db>,
+    video_id: i64,
+) -> Result<String, String> {
+    let video = db.get_video(video_id).map_err(|e| e.to_string())?;
+    if video.output_path.is_empty() {
+        return Err("这条视频还没有成片，先合成".to_string());
+    }
+    let project_name = db
+        .list_projects()
+        .ok()
+        .and_then(|ps| ps.into_iter().find(|p| p.id == video.project_id))
+        .map(|p| p.name)
+        .unwrap_or_default();
+    let tag = project_name.replace(|c: char| c.is_whitespace(), "");
+    let caption = format!(
+        "{}\n\n#小说推文 #番茄小说{}",
+        video.title,
+        if tag.is_empty() { String::new() } else { format!(" #{tag}") }
+    );
+
+    let script = DOUYIN_FILL_SCRIPT
+        .replace("__TITLE__", &serde_json::to_string(&video.title).unwrap())
+        .replace("__CAPTION__", &serde_json::to_string(&caption).unwrap());
+    match eval_and_read(&app, DOUYIN_WIN_LABEL, script).await? {
+        Some(v) => {
+            let message = v["message"].as_str().unwrap_or("未知结果").to_string();
+            if v["ok"].as_bool() == Some(true) {
+                Ok(message)
+            } else {
+                Err(message)
+            }
+        }
+        None => Ok("填充指令已发送，请查看抖音窗口确认".to_string()),
     }
 }

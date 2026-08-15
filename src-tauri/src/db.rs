@@ -93,6 +93,13 @@ pub struct Video {
     pub status: String,
     /// image = 静图运镜（默认）/ video = 图生视频（Seedance，按量计费）
     pub mode: String,
+    /// BGM 文件路径（空 = 无）
+    pub bgm_path: String,
+    /// BGM 音量百分比（相对配音轨），默认 15
+    pub bgm_volume: i64,
+    /// 片头/片尾素材（图片或 mp4，空 = 无）
+    pub intro_path: String,
+    pub outro_path: String,
     pub output_path: String,
     pub error: String,
     pub created_at: i64,
@@ -386,6 +393,17 @@ impl Db {
             .context("迁移 v9 失败")?;
         }
         conn.pragma_update(None, "user_version", 9)?;
+        // v10：视频 BGM / 片头片尾
+        if version < 10 {
+            conn.execute_batch(
+                "ALTER TABLE videos ADD COLUMN bgm_path TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE videos ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 15;
+                 ALTER TABLE videos ADD COLUMN intro_path TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE videos ADD COLUMN outro_path TEXT NOT NULL DEFAULT '';",
+            )
+            .context("迁移 v10 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 10)?;
         Ok(())
     }
 
@@ -948,6 +966,10 @@ impl Db {
             narration: String::new(),
             status: "draft".to_string(),
             mode: mode.to_string(),
+            bgm_path: String::new(),
+            bgm_volume: 15,
+            intro_path: String::new(),
+            outro_path: String::new(),
             output_path: String::new(),
             error: String::new(),
             created_at: ts,
@@ -958,7 +980,7 @@ impl Db {
     pub fn list_videos(&self, project_id: i64) -> Result<Vec<Video>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, title, chapter_ids, narration, status, mode, output_path, error, created_at, updated_at
+            "SELECT id, project_id, title, chapter_ids, narration, status, mode, bgm_path, bgm_volume, intro_path, outro_path, output_path, error, created_at, updated_at
              FROM videos WHERE project_id = ?1 ORDER BY id DESC",
         )?;
         let rows = stmt.query_map(params![project_id], |r| {
@@ -970,10 +992,14 @@ impl Db {
                 narration: r.get(4)?,
                 status: r.get(5)?,
                 mode: r.get(6)?,
-                output_path: r.get(7)?,
-                error: r.get(8)?,
-                created_at: r.get(9)?,
-                updated_at: r.get(10)?,
+                bgm_path: r.get(7)?,
+                bgm_volume: r.get(8)?,
+                intro_path: r.get(9)?,
+                outro_path: r.get(10)?,
+                output_path: r.get(11)?,
+                error: r.get(12)?,
+                created_at: r.get(13)?,
+                updated_at: r.get(14)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -982,7 +1008,7 @@ impl Db {
     pub fn get_video(&self, id: i64) -> Result<Video> {
         let conn = self.conn.lock().unwrap();
         let v = conn.query_row(
-            "SELECT id, project_id, title, chapter_ids, narration, status, mode, output_path, error, created_at, updated_at
+            "SELECT id, project_id, title, chapter_ids, narration, status, mode, bgm_path, bgm_volume, intro_path, outro_path, output_path, error, created_at, updated_at
              FROM videos WHERE id = ?1",
             params![id],
             |r| {
@@ -994,10 +1020,14 @@ impl Db {
                     narration: r.get(4)?,
                     status: r.get(5)?,
                     mode: r.get(6)?,
-                    output_path: r.get(7)?,
-                    error: r.get(8)?,
-                    created_at: r.get(9)?,
-                    updated_at: r.get(10)?,
+                    bgm_path: r.get(7)?,
+                    bgm_volume: r.get(8)?,
+                    intro_path: r.get(9)?,
+                    outro_path: r.get(10)?,
+                    output_path: r.get(11)?,
+                    error: r.get(12)?,
+                    created_at: r.get(13)?,
+                    updated_at: r.get(14)?,
                 })
             },
         )?;
@@ -1018,6 +1048,24 @@ impl Db {
         conn.execute(
             "UPDATE videos SET status = ?1, error = ?2, updated_at = ?3 WHERE id = ?4",
             params![status, error, now(), id],
+        )?;
+        Ok(())
+    }
+
+    /// 设置 BGM / 片头片尾（路径为已拷入视频目录的产物）
+    pub fn set_video_extras(
+        &self,
+        id: i64,
+        bgm_path: &str,
+        bgm_volume: i64,
+        intro_path: &str,
+        outro_path: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE videos SET bgm_path = ?1, bgm_volume = ?2, intro_path = ?3, outro_path = ?4, updated_at = ?5
+             WHERE id = ?6",
+            params![bgm_path, bgm_volume, intro_path, outro_path, now(), id],
         )?;
         Ok(())
     }

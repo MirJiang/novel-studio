@@ -555,7 +555,11 @@ export default function App() {
                   chapters={chapters}
                 />
               ) : view?.kind === "publish" ? (
-                <PublishView key={currentProjectId} chapters={chapters} />
+                <PublishView
+                  key={currentProjectId}
+                  projectId={currentProjectId}
+                  chapters={chapters}
+                />
               ) : chapters.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center">
                   <div className="text-center">

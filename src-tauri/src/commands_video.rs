@@ -470,6 +470,57 @@ pub(crate) async fn run_video_shots(
     Ok(TaskEnd::Done(format!("镜头视频 ×{done}")))
 }
 
+fn non_empty_path(p: &str) -> Option<PathBuf> {
+    if p.trim().is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(p))
+    }
+}
+
+/// 设置 BGM / 片头片尾：把用户选的文件拷进视频产物目录（防原文件被移动），再落库
+#[tauri::command]
+pub fn set_video_extras(
+    app: AppHandle,
+    db: State<'_, Db>,
+    video_id: i64,
+    bgm_path: String,
+    bgm_volume: i64,
+    intro_path: String,
+    outro_path: String,
+) -> Result<(), String> {
+    let video = db.get_video(video_id).map_err(|e| e.to_string())?;
+    let dir = videos_dir(&app, &video)?;
+
+    // 拷入目录并返回新路径；空串 = 清除
+    let stage = |src: &str, stem: &str| -> Result<String, String> {
+        if src.trim().is_empty() {
+            return Ok(String::new());
+        }
+        let sp = PathBuf::from(src);
+        let ext = sp
+            .extension()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_else(|| "bin".to_string());
+        let dst = dir.join(format!("{stem}.{ext}"));
+        // 源就是目标（重复保存已拷入的文件）时跳过拷贝——fs::copy 自拷贝会截断文件
+        let same = std::fs::canonicalize(&sp)
+            .ok()
+            .zip(std::fs::canonicalize(&dst).ok())
+            .is_some_and(|(a, b)| a == b);
+        if !same {
+            std::fs::copy(&sp, &dst).map_err(|e| format!("拷贝素材失败: {e}"))?;
+        }
+        Ok(dst.to_string_lossy().to_string())
+    };
+
+    let bgm = stage(&bgm_path, "bgm")?;
+    let intro = stage(&intro_path, "intro")?;
+    let outro = stage(&outro_path, "outro")?;
+    db.set_video_extras(video_id, &bgm, bgm_volume, &intro, &outro)
+        .map_err(|e| e.to_string())
+}
+
 // ---------- 第四步：配音 ----------
 
 async fn synth_one_voice(
@@ -574,12 +625,18 @@ pub async fn compose_video(
             text: s.text.clone(),
         })
         .collect();
+    let extras = crate::video::ComposeExtras {
+        bgm: non_empty_path(&video.bgm_path),
+        bgm_volume: video.bgm_volume,
+        intro: non_empty_path(&video.intro_path),
+        outro: non_empty_path(&video.outro_path),
+    };
 
     // 合成是 CPU 密集活，扔到阻塞线程
     let dir_clone = dir.clone();
     let out_clone = out.clone();
     let result = tokio::task::spawn_blocking(move || {
-        video::compose(&dir_clone, &compose_shots, &out_clone)
+        video::compose(&dir_clone, &compose_shots, &out_clone, &extras)
     })
     .await
     .map_err(|e| e.to_string())?;

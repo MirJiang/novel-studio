@@ -130,6 +130,13 @@ export interface Video {
   status: string;
   /** image = 静图运镜（默认）/ video = 图生视频（Seedance 按量计费） */
   mode: string;
+  /** BGM 文件路径（空 = 无） */
+  bgm_path: string;
+  /** BGM 音量百分比（相对配音轨） */
+  bgm_volume: number;
+  /** 片头/片尾素材（图片或 mp4，空 = 无） */
+  intro_path: string;
+  outro_path: string;
   output_path: string;
   error: string;
   created_at: number;
