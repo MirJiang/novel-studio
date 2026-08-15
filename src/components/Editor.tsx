@@ -11,6 +11,10 @@ interface EditorProps {
   onSaved: () => void;
   /** 打开批量写章弹层（App 层挂载，切章节不丢进度） */
   onOpenBatchWrite: () => void;
+  /** 进书恢复的上次滚动位置（px） */
+  initialScroll?: number;
+  /** 滚动位置上报（节流），用于按书籍记住阅读位置 */
+  onScrollPos?: (top: number) => void;
 }
 
 interface SelInfo {
@@ -40,7 +44,7 @@ function makeInserter(ed: TiptapEditor, startPos: number) {
   };
 }
 
-export function Editor({ chapter, onSaved, onOpenBatchWrite }: EditorProps) {
+export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onScrollPos }: EditorProps) {
   const [title, setTitle] = useState(chapter.title);
   const titleRef = useRef(title);
   titleRef.current = title;
@@ -119,6 +123,23 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite }: EditorProps) {
     summaryTimer.current = window.setTimeout(() => void flushSummary(), 800);
   }, [flushSummary]);
 
+  // ---------- 阅读位置：恢复 + 节流上报 ----------
+
+  const scrollPosRef = useRef(0);
+  const onScrollPosRef = useRef(onScrollPos);
+  onScrollPosRef.current = onScrollPos;
+  const scrollReportTimer = useRef<number | null>(null);
+
+  const handleScroll = () => {
+    const top = scrollRef.current?.scrollTop ?? 0;
+    scrollPosRef.current = top;
+    if (scrollReportTimer.current != null) return; // 节流：600ms 最多上报一次
+    scrollReportTimer.current = window.setTimeout(() => {
+      scrollReportTimer.current = null;
+      onScrollPosRef.current?.(scrollPosRef.current);
+    }, 600);
+  };
+
   // 卸载兜底保存
   useEffect(() => {
     return () => {
@@ -131,6 +152,9 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite }: EditorProps) {
       if (summaryDirtyRef.current) {
         void api.saveSummary(chapterIdRef.current, summaryRef.current);
       }
+      // 卸载前最后一次上报滚动位置（节流可能漏掉末尾）
+      if (scrollRef.current) scrollPosRef.current = scrollRef.current.scrollTop;
+      onScrollPosRef.current?.(scrollPosRef.current);
     };
   }, []);
 
@@ -169,6 +193,18 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite }: EditorProps) {
   });
   const editorRef = useRef<TiptapEditor | null>(null);
   editorRef.current = editor;
+
+  // 进书恢复位置：等 TipTap 布局稳定后再滚
+  useEffect(() => {
+    if (!initialScroll || !editor) return;
+    const t = window.setTimeout(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = initialScroll;
+        scrollPosRef.current = initialScroll;
+      }
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [editor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- AI 流式公共部分 ----------
 
@@ -284,7 +320,11 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite }: EditorProps) {
       </div>
 
       {/* 写作区（relative 供划词浮动条定位） */}
-      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="relative min-h-0 flex-1 overflow-y-auto"
+      >
         <div className="mx-auto max-w-[680px] px-8 pt-6 pb-24">
           <input
             className="w-full bg-transparent font-display text-[34px] font-bold tracking-tight text-ink outline-none placeholder:text-faint"

@@ -23,7 +23,7 @@ import {
 
 /** 主视图：写章节 / 编辑设定 / 封面工坊 / 全书体检 */
 type View =
-  | { kind: "chapter"; chapter: Chapter }
+  | { kind: "chapter"; chapter: Chapter; initialScroll?: number }
   | { kind: "lore"; entry: LoreEntry }
   | { kind: "outline" }
   | { kind: "cover" }
@@ -162,12 +162,25 @@ export default function App() {
     setView({ kind: "chapter", chapter: c });
   };
 
-  const handleSelectChapter = async (id: number) => {
+  const handleSelectChapter = async (id: number, initialScroll?: number) => {
     try {
-      setView({ kind: "chapter", chapter: await api.getChapter(id) });
+      setView({ kind: "chapter", chapter: await api.getChapter(id), initialScroll });
     } catch (e) {
       console.error(e);
     }
+  };
+
+  // ---------- 阅读位置记忆（每本书一条 settings 记录） ----------
+
+  const posKey = (pid: number) => `pos_${pid}`;
+
+  /** 编辑器节流/卸载时上报：记住这本书最后停在哪章哪屏 */
+  const handleScrollPos = (chapterId: number, top: number) => {
+    if (currentProjectId == null) return;
+    void api.setSetting(
+      posKey(currentProjectId),
+      JSON.stringify({ chapter_id: chapterId, scroll: top })
+    );
   };
 
   // ---------- 任务队列（App 层轮询：浮条 / toast / 章节实时刷新） ----------
@@ -335,17 +348,26 @@ export default function App() {
     }
   };
 
-  /** 从书架进入作品：自动切到写作态——打开最近章节，没有记忆则打开最新一章 */
+  /** 从书架进入作品：恢复上次的阅读位置（章节 + 滚动位置），没存过则打开最新一章 */
   const handleOpenProject = async (id: number) => {
     setCurrentProjectId(id);
     const list = await api.listChapters(id);
     if (list.length === 0) return; // 零章节新书停在空状态页（有批量写章入口）
-    const last = lastChapterRef.current;
-    const target =
-      last && list.some((c) => c.id === last.id)
-        ? last.id
-        : list[list.length - 1].id;
-    void handleSelectChapter(target);
+    let chapterId = list[list.length - 1].id;
+    let scroll = 0;
+    try {
+      const raw = await api.getSetting(posKey(id));
+      if (raw) {
+        const pos = JSON.parse(raw) as { chapter_id: number; scroll: number };
+        if (list.some((c) => c.id === pos.chapter_id)) {
+          chapterId = pos.chapter_id;
+          scroll = pos.scroll || 0;
+        }
+      }
+    } catch {
+      /* 位置数据损坏当没存过 */
+    }
+    void handleSelectChapter(chapterId, scroll);
   };
 
   // 标题栏面包屑：作品名 / 当前视图
@@ -537,6 +559,10 @@ export default function App() {
                   chapter={view.chapter}
                   onSaved={handleChapterSaved}
                   onOpenBatchWrite={() => setBatchOpen(true)}
+                  initialScroll={view.initialScroll}
+                  onScrollPos={(top) => {
+                    if (view.kind === "chapter") handleScrollPos(view.chapter.id, top);
+                  }}
                 />
               ) : view?.kind === "lore" ? (
                 <LoreEditor
