@@ -94,6 +94,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<BootstrapDraft | null>(null);
   const [draftTab, setDraftTab] = useState<DraftTab>("base");
+  const [draftGenerating, setDraftGenerating] = useState(false); // [DRAFT] 已出现，JSON 生成中
   const [styles, setStyles] = useState<Style[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [history, setHistory] = useState<ChatSession[] | null>(null);
@@ -198,22 +199,30 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
     ]);
     setInput("");
     setBusy(true);
+    setDraftGenerating(false);
     let acc = "";
     try {
       await api.aiBootstrapChatStream(historyMsgs, (ev) => {
         if (ev.type === "delta") {
           acc += ev.text;
-          const cur = acc;
+          // [DRAFT] 之后的 JSON 不上屏：气泡只显示策划思路，JSON 收起为生成状态
+          const pos = acc.indexOf("[DRAFT]");
+          const generating = pos >= 0;
+          setDraftGenerating(generating);
+          const visible = generating ? acc.slice(0, pos).trimEnd() : acc;
           setMessages((prev) => {
             const next = [...prev];
-            next[next.length - 1] = { role: "ai", text: cur };
+            next[next.length - 1] = {
+              role: "ai",
+              text: visible + (generating ? "\n\n*方案草稿生成中…*" : ""),
+            };
             return next;
           });
         } else if (ev.type === "error") {
           setError(ev.message);
         }
       });
-      // 流结束：拆草稿；[DRAFT] 标记从气泡里剥掉；会话落库归档
+      // 流结束：拆草稿；会话落库归档
       const { reply, draft: d } = parseReply(acc);
       const finalMsgs: UiMsg[] = [
         ...messages,
@@ -228,6 +237,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
       setError(String(e));
     } finally {
       setBusy(false);
+      setDraftGenerating(false);
     }
   };
 
@@ -407,9 +417,19 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
               {!draft ? (
                 <div className="flex h-full items-center justify-center px-6 text-center">
                   <p className="text-[13px] leading-6 text-faint">
-                    聊着聊着，新书的草稿会出现在这里：
-                    <br />
-                    基础信息 / 初始设定 / 分卷大纲 / 开篇流程
+                    {draftGenerating ? (
+                      <>
+                        <span className="mb-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                        <br />
+                        方案草稿生成中，生成完自动填充…
+                      </>
+                    ) : (
+                      <>
+                        聊着聊着，新书的草稿会出现在这里：
+                        <br />
+                        基础信息 / 初始设定 / 分卷大纲 / 开篇流程
+                      </>
+                    )}
                   </p>
                 </div>
               ) : draftTab === "base" ? (
