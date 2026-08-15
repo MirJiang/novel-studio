@@ -103,7 +103,7 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 - 风格库：`distill_style(name, source, sample_text)` `list_styles` `delete_style` `set_project_style(project_id, style_id)`
 - 发布：`open_fanqie_window` `fill_chapter_draft(chapter_id)`（番茄章节，只填不发布）
   `open_douyin_window` `fill_douyin_caption(video_id)`（抖音上传页填标题+话题；视频文件人工拖入——文件框 JS 设不了）
-- AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_draft(idea)` `ai_bootstrap_chat(messages)`（对话式起书，回复可能带 [DRAFT] 草稿）
+- AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_draft(idea)` `ai_bootstrap_chat_stream(messages, channel)`（对话式起书流式，[DRAFT] 草稿前端解析）`save_chat_session` `get_latest_chat_session` `list_chat_sessions` `delete_chat_session`（起书会话归档 v11）
 
 ### 设置项 key（settings 表）
 
@@ -160,7 +160,8 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 - 人物卡视觉参考图：上传存 %APPDATA%/lore_refs/，分镜生图命中角色自动携带（≤3 张）
 - AI 起书（对话式）：书架「AI 辅助创建」→ AI 策划多轮提问（题材/卖点/主角/爽点/篇幅，每轮至多 1~2 问），
   信息够了自动出草稿（[DRAFT] 标记 + JSON），可改可删确认后落库；可随时「直接生成」跳过问答
-  （ai_bootstrap_chat + AICreateWizard.tsx；旧的一键出草稿命令 ai_bootstrap_draft 保留未用）
+  （ai_bootstrap_chat_stream 流式 + AICreateWizard.tsx 整页覆盖层；会话自动存 chat_sessions 表（v11），
+  「新会话」归档当前、「历史」面板可回看/继续/删除；创建成功后自动开新会话，旧的不丢）
 - 作品简介与大纲：侧栏第三 Tab；番茄风简介 AI 生成/手改；分卷大纲节点可编辑可标记完成，
   进度条管控；**大纲注入续写 prompt**（600 字预算，首个未完成节点标 ◀当前）
 - 批量写章：Editor「批量写章」弹层（零章节新书的空状态页也有入口）→ 后端 generate_chapters
