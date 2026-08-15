@@ -179,6 +179,9 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 
 ## 下一步
 
+- 全书级内容整改（防审核风险）：跨章敏感内容检测 → 批量定位 → 按指令批量改写
+  （如"把涉及 xx 的描写全部替换掉"），严重时支持流程级改写（调大纲 → 受影响章节标记重写）；
+  体检已有摘要链 + 报告基础，可在此基础上长
 - 视频平台分发官方 API（抖音 content/create 需开发者资质；TikTok/YouTube 另说）
 - 红果短剧：无个人 UGC 上传通道（机构版权方供给制），不做——见 D23
 
