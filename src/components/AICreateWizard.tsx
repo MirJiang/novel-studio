@@ -42,7 +42,6 @@ function parseReply(raw: string): { reply: string; draft: BootstrapDraft | null 
         category: VALID_CATEGORIES.includes(l.category) ? l.category : "其他",
       }));
     if (!Array.isArray(d.outline)) d.outline = [];
-    if (!Array.isArray(d.opening)) d.opening = [];
     return { reply: reply || "策划方案好了，看看：", draft: d };
   } catch {
     return { reply: raw.trim(), draft: null };
@@ -78,7 +77,7 @@ function AiMarkdown({ text }: { text: string }) {
   );
 }
 
-type DraftTab = "base" | "lore" | "outline" | "opening";
+type DraftTab = "base" | "lore" | "outline";
 
 /**
  * AI 起书向导（对话式，整页覆盖层）：左侧 AI 策划对话，右侧草稿面板
@@ -249,8 +248,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
   const tabs: [DraftTab, string, number?][] = [
     ["base", "基础信息"],
     ["lore", "设定", draft?.lore.length],
-    ["outline", "大纲", draft?.outline?.length],
-    ["opening", "开篇流程", draft?.opening?.length],
+    ["outline", "整体流程", draft?.outline?.length],
   ];
 
   return (
@@ -427,7 +425,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
                       <>
                         聊着聊着，新书的草稿会出现在这里：
                         <br />
-                        基础信息 / 初始设定 / 分卷大纲 / 开篇流程
+                        基础信息 / 初始设定 / 整体流程
                       </>
                     )}
                   </p>
@@ -541,7 +539,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
                     <p className="py-6 text-center text-xs text-faint">无设定词条</p>
                   )}
                 </div>
-              ) : draftTab === "outline" ? (
+              ) : (
                 <div className="flex flex-col gap-2">
                   {(draft.outline ?? []).map((o, i) => (
                     <div key={i} className="rounded-xl bg-canvas p-3">
@@ -581,44 +579,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
                   ))}
                   {(draft.outline ?? []).length === 0 && (
                     <p className="py-6 text-center text-xs text-faint">
-                      草稿里没有大纲节点，可以叫策划补上
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  {(draft.opening ?? []).map((line, i) => (
-                    <div key={i} className="flex items-start gap-2 rounded-xl bg-canvas p-2.5">
-                      <span className="mt-0.5 shrink-0 text-[10px] text-faint">
-                        {i + 1}
-                      </span>
-                      <textarea
-                        className="min-h-8 min-w-0 flex-1 resize-none rounded-lg bg-surface px-2 py-1 text-xs leading-5 text-body outline-none"
-                        value={line}
-                        rows={2}
-                        onChange={(e) => {
-                          const next = [...(draft.opening ?? [])];
-                          next[i] = e.target.value;
-                          setDraft({ ...draft, opening: next });
-                        }}
-                      />
-                      <button
-                        className="mt-0.5 text-faint hover:text-pred-t"
-                        title="移除"
-                        onClick={() => {
-                          setDraft({
-                            ...draft,
-                            opening: (draft.opening ?? []).filter((_, j) => j !== i),
-                          });
-                        }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  {(draft.opening ?? []).length === 0 && (
-                    <p className="py-6 text-center text-xs text-faint">
-                      草稿里没有开篇流程，可以叫策划补上
+                      草稿里没有流程步骤，可以叫策划补上
                     </p>
                   )}
                 </div>

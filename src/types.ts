@@ -95,10 +95,8 @@ export interface BootstrapDraft {
   target_chapter_words?: number;
   /** 写作风格 id（可选，0/undefined = 不指定） */
   style_id?: number;
-  /** 分卷大纲节点 */
+  /** 整本书的分步流程（开局→…→结局 6~10 步，落库为大纲节点） */
   outline?: { title: string; content: string }[];
-  /** 开篇流程：前 10 章章纲，每章一句话 */
-  opening?: string[];
   lore: BootstrapLore[];
 }
 

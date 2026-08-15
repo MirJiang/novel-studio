@@ -149,20 +149,7 @@ export default function App() {
         await api.saveProjectInfo(p.id, draft.description, draft.synopsis);
         p.synopsis = draft.synopsis;
       }
-      // 开篇流程作为首个大纲节点（内容不进 prompt 注入，只是创作路标）
-      const opening = (draft.opening ?? []).filter((s) => s.trim());
-      if (opening.length > 0) {
-        const it = await api.addOutlineItem(
-          p.id,
-          `开篇流程（前 ${opening.length} 章）`
-        );
-        await api.saveOutlineItem(
-          it.id,
-          it.title,
-          opening.map((s, i) => `${i + 1}. ${s}`).join("\n")
-        );
-      }
-      // 分卷大纲节点
+      // 整体流程步骤落库为大纲节点（进度追踪 + 续写注入）
       let outlineCount = 0;
       for (const o of draft.outline ?? []) {
         if (!o.title.trim()) continue;

@@ -1420,12 +1420,9 @@ pub struct BootstrapDraft {
     /// 每章目标字数
     #[serde(default)]
     pub target_chapter_words: Option<i64>,
-    /// 分卷大纲节点
+    /// 整本书的分步流程（开局→…→结局 6~10 步，落库为大纲节点）
     #[serde(default)]
     pub outline: Vec<OutlineDraft>,
-    /// 开篇流程：前 10 章章纲，每章一句话（目标/冲突/章末拉力）
-    #[serde(default)]
-    pub opening: Vec<String>,
     pub lore: Vec<BootstrapLore>,
 }
 
@@ -1517,12 +1514,12 @@ const BOOTSTRAP_CHAT_SYSTEM: &str = "你是资深中文网文策划，深谙番�
 {\"name\": \"书名（2~6字，有网感）\", \"description\": \"题材+一句话卖点，20字内\", \
 \"synopsis\": \"番茄风简介100~150字：第一句钩子、点出看点、结尾悬念\", \
 \"target_total_words\": 全书目标字数（数字）, \"target_chapter_words\": 每章字数（数字，网文一般 2000~3000）, \
-\"outline\": [{\"title\": \"卷一·xxx\", \"content\": \"本卷目标/核心冲突/高潮兑现/卷末变化，60字内\"}…], \
-\"opening\": [\"第1章：本章目标+冲突+章末钩子，一句话\"…], \
+\"outline\": [{\"title\": \"阶段名（如：开局·立足异界 / 中期·文明碰撞）\", \"content\": \"这一步的阶段目标/主要冲突/阶段末局面变化，60字内\"}…], \
 \"lore\": [{\"category\": \"人物/世界观/地点/物品/伏笔/其他\", \"title\": \"词条名\", \
 \"content\": \"设定内容\", \"keywords\": \"触发词,逗号分隔\", \"always_include\": true}…]}\
 （lore 4~6 条，必含主角人物卡 always_include=true、核心对手、世界观、金手指；\
-outline 5~8 个分卷节点，第一卷必须把黄金三章的抓人点排进去；opening 写前 10 章章纲）";
+outline 是整本书的分步流程：开局→前期发展→中期转折→后期爆发→结局，6~10 步，\
+第一步必须把黄金三章的抓人点排进去）";
 
 #[derive(Debug, Serialize)]
 pub struct BootstrapChatReply {
