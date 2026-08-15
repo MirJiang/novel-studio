@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { api } from "../lib/api";
 import type { BootstrapDraft, ChatMsg, Style } from "../types";
 
@@ -40,6 +41,35 @@ function parseReply(raw: string): { reply: string; draft: BootstrapDraft | null 
   } catch {
     return { reply: raw.trim(), draft: null };
   }
+}
+
+/** AI 气泡的 Markdown 渲染（加粗/列表/标题按设计系统排） */
+function AiMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
+        strong: ({ children }) => (
+          <strong className="font-semibold text-ink">{children}</strong>
+        ),
+        ul: ({ children }) => (
+          <ul className="my-1.5 list-disc space-y-1 pl-5">{children}</ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="my-1.5 list-decimal space-y-1 pl-5">{children}</ol>
+        ),
+        li: ({ children }) => <li className="leading-6">{children}</li>,
+        h1: ({ children }) => <p className="mt-2 font-bold text-ink">{children}</p>,
+        h2: ({ children }) => <p className="mt-2 font-bold text-ink">{children}</p>,
+        h3: ({ children }) => <p className="mt-2 font-semibold text-ink">{children}</p>,
+        code: ({ children }) => (
+          <code className="rounded bg-black/6 px-1 py-0.5 text-[12px]">{children}</code>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
 }
 
 /**
@@ -145,13 +175,21 @@ export function AICreateWizard({ onCancel, onCreate }: AICreateWizardProps) {
           {messages.map((m, i) => (
             <div
               key={i}
-              className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 ${
+              className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 ${
                 m.role === "ai"
                   ? "self-start bg-canvas text-body"
-                  : "self-end bg-accent text-surface"
+                  : "self-end whitespace-pre-wrap bg-accent text-surface"
               }`}
             >
-              {m.text || (busy && i === messages.length - 1 ? "…" : "")}
+              {m.role === "ai" ? (
+                m.text ? (
+                  <AiMarkdown text={m.text} />
+                ) : busy && i === messages.length - 1 ? (
+                  "…"
+                ) : null
+              ) : (
+                m.text
+              )}
             </div>
           ))}
         </div>
