@@ -35,7 +35,18 @@ struct ChatRequest {
     /// 输出上限；None 时字段不下发（各家默认值不同）
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    /// 关闭思考模式：思考型模型（如 deepseek-v4-flash）会把 token 预算耗在
+    /// reasoning 上导致正文为空，且显著拖慢速度；写作链路不需要它
+    ///（OpenAI 兼容服务端对未知字段普遍忽略，不影响非思考型模型）
+    thinking: Thinking,
 }
+
+#[derive(Serialize)]
+struct Thinking {
+    r#type: &'static str,
+}
+
+const THINKING_DISABLED: Thinking = Thinking { r#type: "disabled" };
 
 #[derive(Serialize)]
 struct ChatMessage {
@@ -84,6 +95,7 @@ pub async fn stream_chat(
         stream: true,
         temperature: 0.8,
         max_tokens: None,
+        thinking: THINKING_DISABLED,
     };
 
     let client = reqwest::Client::new();
@@ -178,6 +190,25 @@ struct RespMessage {
 
 /// 非流式对话：用于摘要生成等"要一个完整结果"的场景
 pub async fn chat_once(cfg: LlmConfig, messages: Vec<(String, String)>) -> Result<String> {
+    // 空内容重试一次：思考型模型偶发正文为空，或平台内容过滤抽风
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..2 {
+        match chat_once_inner(&cfg, &messages).await {
+            Ok(text) => return Ok(text),
+            Err(e) => {
+                let is_empty = e.to_string().contains("空内容");
+                if !is_empty || attempt == 1 {
+                    return Err(e);
+                }
+                last_err = Some(e);
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("LLM 调用失败")))
+}
+
+async fn chat_once_inner(cfg: &LlmConfig, messages: &[(String, String)]) -> Result<String> {
     if cfg.api_key.trim().is_empty() {
         return Err(anyhow!("尚未配置 LLM API Key，请先在设置中填写"));
     }
@@ -185,13 +216,17 @@ pub async fn chat_once(cfg: LlmConfig, messages: Vec<(String, String)>) -> Resul
     let body = ChatRequest {
         model: cfg.model.clone(),
         messages: messages
-            .into_iter()
-            .map(|(role, content)| ChatMessage { role, content })
+            .iter()
+            .map(|(role, content)| ChatMessage {
+                role: role.clone(),
+                content: content.clone(),
+            })
             .collect(),
         stream: false,
         temperature: 0.3,
         // 批量写章等非流式场景要拿完整长文，显式放宽输出上限（DeepSeek 上限 8192）
         max_tokens: Some(8192),
+        thinking: THINKING_DISABLED,
     };
     let resp = reqwest::Client::new()
         .post(&url)
