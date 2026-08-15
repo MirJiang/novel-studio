@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import type { BootstrapDraft, Project, Style } from "../types";
-import { AICreateWizard } from "./AICreateWizard";
+import type { Project, Style } from "../types";
 
 interface BookshelfProps {
   projects: Project[];
@@ -12,7 +11,8 @@ interface BookshelfProps {
     targetChapterWords?: number,
     styleId?: number
   ) => void;
-  onAiCreate: (draft: BootstrapDraft) => void;
+  /** 打开 AI 起书向导（整页覆盖层，App 常驻挂载） */
+  onOpenWizard: () => void;
   onRename: (id: number, name: string) => void;
   onDelete: (id: number) => void;
 }
@@ -30,8 +30,6 @@ const TILE_GRADIENTS = [
  * 封面取封面工坊的最新一张；没生成过则用渐变 + 衬线书名。
  */
 export function Bookshelf(props: BookshelfProps) {
-  const [wizardOpen, setWizardOpen] = useState(false);
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -47,7 +45,7 @@ export function Bookshelf(props: BookshelfProps) {
               <NewBookButton onCreate={props.onCreate} />
               <button
                 className="flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
-                onClick={() => setWizardOpen((v) => !v)}
+                onClick={props.onOpenWizard}
               >
                 <svg viewBox="0 0 12 12" className="h-3 w-3">
                   <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.8" />
@@ -56,16 +54,6 @@ export function Bookshelf(props: BookshelfProps) {
               </button>
             </div>
           </div>
-
-          {wizardOpen && (
-            <AICreateWizard
-              onCancel={() => setWizardOpen(false)}
-              onCreate={(d) => {
-                setWizardOpen(false);
-                props.onAiCreate(d);
-              }}
-            />
-          )}
 
           <div className="mt-8 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-6 gap-y-9">
             {props.projects.map((p, i) => (

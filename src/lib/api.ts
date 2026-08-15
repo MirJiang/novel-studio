@@ -415,6 +415,16 @@ export const api = {
   aiBootstrapChat: (messages: ChatMsg[]) =>
     invoke<BootstrapChatReply>("ai_bootstrap_chat", { messages }),
 
+  /** 对话式起书（流式）：delta 实时推送；[DRAFT] 草稿由前端在 done 后解析 */
+  aiBootstrapChatStream: (
+    messages: ChatMsg[],
+    onEvent: (event: StreamEvent) => void
+  ) => {
+    const channel = new Channel<StreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("ai_bootstrap_chat_stream", { messages, channel });
+  },
+
   /** AI 润色创意：一句话创意 → 更具体的创作 brief */
   aiPolishIdea: (idea: string) => invoke<string>("ai_polish_idea", { idea }),
 

@@ -1573,3 +1573,25 @@ pub async fn ai_bootstrap_chat(
         })
     }
 }
+
+/// 对话式起书（流式版）：delta 实时推给前端，[DRAFT] 草稿由前端在 done 后解析
+#[tauri::command]
+pub async fn ai_bootstrap_chat_stream(
+    db: State<'_, Db>,
+    messages: Vec<ChatMsg>,
+    channel: Channel<StreamEvent>,
+) -> Result<(), String> {
+    if messages.is_empty() {
+        return Err("对话为空".to_string());
+    }
+    let cfg = load_llm_config(&db);
+    let mut msgs: Vec<(String, String)> =
+        vec![("system".to_string(), BOOTSTRAP_CHAT_SYSTEM.to_string())];
+    for m in messages {
+        let role = if m.role == "assistant" { "assistant" } else { "user" };
+        msgs.push((role.to_string(), m.content));
+    }
+    llm::stream_chat(cfg, msgs, channel)
+        .await
+        .map_err(|e| e.to_string())
+}

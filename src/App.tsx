@@ -16,6 +16,7 @@ import { OutlineView } from "./components/OutlineView";
 import { SettingsView } from "./components/SettingsView";
 import { StylesView } from "./components/StylesView";
 import { Bookshelf } from "./components/Bookshelf";
+import { AICreateWizard } from "./components/AICreateWizard";
 import {
   BatchWriteDialog,
   type BatchStartOptions,
@@ -41,6 +42,9 @@ export default function App() {
   const [view, setView] = useState<View>(null);
   const [settingsOpen, setSettingsOpen] = useState(false); // 设置页（整页路由，非弹窗）
   const [stylesOpen, setStylesOpen] = useState(false); // 风格库（整页路由，全局）
+  const [wizardOpen, setWizardOpen] = useState(false); // AI 起书向导（覆盖层，常驻挂载不丢对话）
+  const [wizardEverOpened, setWizardEverOpened] = useState(false);
+  const [wizardEpoch, setWizardEpoch] = useState(0); // 创建成功后 +1 重置对话
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -524,7 +528,10 @@ export default function App() {
             onCreate={(name, total, per, styleId) =>
               void handleCreateProject(name, total, per, styleId)
             }
-            onAiCreate={(draft) => void handleAiCreate(draft)}
+            onOpenWizard={() => {
+              setWizardEverOpened(true);
+              setWizardOpen(true);
+            }}
             onRename={(id, name) => void handleRenameProject(id, name)}
             onDelete={(id) => void handleDeleteProject(id)}
           />
@@ -696,6 +703,27 @@ export default function App() {
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-ink/90 px-4 py-2 text-sm text-surface shadow-float backdrop-blur">
           {toast}
+        </div>
+      )}
+
+      {/* AI 起书向导：整页覆盖层；收起只是隐藏（常驻挂载），对话与草稿不丢 */}
+      {wizardEverOpened && (
+        <div
+          className={
+            wizardOpen
+              ? "fixed inset-x-0 bottom-0 top-11 z-40 flex flex-col bg-canvas"
+              : "hidden"
+          }
+        >
+          <AICreateWizard
+            key={wizardEpoch}
+            onCancel={() => setWizardOpen(false)}
+            onCreate={(draft) => {
+              setWizardOpen(false);
+              setWizardEpoch((e) => e + 1); // 重置对话，下一本从干净的策划开始
+              void handleAiCreate(draft);
+            }}
+          />
         </div>
       )}
     </div>
