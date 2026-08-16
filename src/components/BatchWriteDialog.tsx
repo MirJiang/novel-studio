@@ -80,7 +80,7 @@ export function BatchWriteDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20 backdrop-blur-sm">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/25 backdrop-blur-sm">
       <div className="w-[420px] rounded-2xl bg-surface p-6 shadow-float">
         <div className="flex items-center">
           <h2 className="text-[17px] font-bold text-ink">批量写章</h2>
@@ -145,7 +145,7 @@ export function BatchWriteDialog({
                 {batch.progress_current}/{batch.progress_total}
               </span>
             </div>
-            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/8">
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track">
               <div
                 className="h-full rounded-full bg-accent transition-all"
                 style={{
@@ -170,7 +170,7 @@ export function BatchWriteDialog({
                 后台运行，去做别的 →
               </button>
               <button
-                className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-pred-t shadow-card transition-colors hover:bg-surface"
+                className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-pred-t shadow-card transition-colors hover:bg-surface"
                 onClick={() => onCancel(batch.id)}
               >
                 取消任务
@@ -187,7 +187,7 @@ export function BatchWriteDialog({
               <button
                 disabled={target <= 0 || remainingChapters <= 0}
                 title={target <= 0 ? "先在上方填全书目标字数" : undefined}
-                className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
                 onClick={() => start(true)}
               >
                 写完整本书

@@ -77,7 +77,7 @@ function WinBtn({
       title={label}
       onClick={onClick}
       className={`flex h-full w-11 items-center justify-center text-muted transition-colors ${
-        close ? "hover:bg-[#E81123] hover:text-white" : "hover:bg-black/6 hover:text-ink"
+        close ? "hover:bg-[#E81123] hover:text-white" : "hover:bg-track hover:text-ink"
       }`}
     >
       {children}

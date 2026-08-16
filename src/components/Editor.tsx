@@ -296,7 +296,7 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onSc
       {/* AI 操作栏 */}
       <div className="flex shrink-0 items-center gap-2 px-5 pb-2.5">
         <input
-          className="min-w-0 flex-1 rounded-[10px] bg-white/60 px-3 py-2 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
+          className="min-w-0 flex-1 rounded-[10px] bg-card/60 px-3 py-2 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
           placeholder="续写要求（可选），如：让主角在此刻觉醒血脉"
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
@@ -313,7 +313,7 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onSc
           disabled={aiBusy}
           onClick={onOpenBatchWrite}
           title="从最后一章往后连续创作多章，或按目标字数写完整本书"
-          className="shrink-0 rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+          className="shrink-0 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
         >
           批量写章
         </button>
@@ -381,7 +381,7 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onSc
           )}
 
           {aiNote && (
-            <div className="mt-4 rounded-xl bg-white/60 px-3.5 py-2.5 text-[11px] leading-5 text-muted shadow-card">
+            <div className="mt-4 rounded-xl bg-card/60 px-3.5 py-2.5 text-[11px] leading-5 text-muted shadow-card">
               {aiNote}
             </div>
           )}

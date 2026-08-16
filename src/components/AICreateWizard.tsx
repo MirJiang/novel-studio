@@ -234,20 +234,20 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
           </span>
           <div className="ml-auto flex items-center gap-2">
             <button
-              className="rounded-full bg-white/70 px-3.5 py-1.5 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+              className="rounded-full bg-card/70 px-3.5 py-1.5 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
               onClick={() => void toggleHistory()}
             >
               历史
             </button>
             <button
-              className="rounded-full bg-white/70 px-3.5 py-1.5 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+              className="rounded-full bg-card/70 px-3.5 py-1.5 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
               onClick={startNewSession}
               title="当前会话自动归档到历史，可回看"
             >
               新会话
             </button>
             <button
-              className="rounded-full bg-white/70 px-4 py-1.5 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+              className="rounded-full bg-card/70 px-4 py-1.5 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
               onClick={onCancel}
             >
               收起 ↓
@@ -333,7 +333,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
             </div>
             <div className="mt-3 flex shrink-0 gap-2">
               <input
-                className="min-w-0 flex-1 rounded-[10px] bg-white/70 px-3 py-2.5 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
+                className="min-w-0 flex-1 rounded-[10px] bg-card/70 px-3 py-2.5 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
                 placeholder="回复策划，或补充你的想法…"
                 value={input}
                 disabled={busy}
@@ -351,7 +351,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
                 disabled={busy}
                 title="跳过问答，按现有信息直接出方案"
                 onClick={() => void send("信息够了，直接生成方案")}
-                className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                className="shrink-0 rounded-full bg-card/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
               >
                 直接生成
               </button>
@@ -567,7 +567,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
                 </button>
                 <button
                   disabled={busy}
-                  className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
+                  className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
                   onClick={() => void send("换个方向，再来一版")}
                 >
                   换一版

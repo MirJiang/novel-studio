@@ -20,7 +20,7 @@ export function AiMarkdown({ text }: { text: string }) {
         h2: ({ children }) => <p className="mt-2 font-bold text-ink">{children}</p>,
         h3: ({ children }) => <p className="mt-2 font-semibold text-ink">{children}</p>,
         code: ({ children }) => (
-          <code className="rounded bg-black/6 px-1 py-0.5 text-[12px]">{children}</code>
+          <code className="rounded bg-track px-1 py-0.5 text-[12px]">{children}</code>
         ),
       }}
     >

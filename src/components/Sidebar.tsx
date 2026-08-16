@@ -24,10 +24,10 @@ export function Sidebar(props: SidebarProps) {
   const [tab, setTab] = useState<Tab>("chapters");
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col bg-white/45">
+    <aside className="flex w-60 shrink-0 flex-col bg-card/45">
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pt-3 pb-3">
         {/* 章节 / 设定 / 大纲 三 Tab（分段控件） */}
-        <div className="mx-1 mt-2 flex gap-1 rounded-[10px] bg-black/5 p-[3px]">
+        <div className="mx-1 mt-2 flex gap-1 rounded-[10px] bg-track p-[3px]">
           <button
             className={`flex-1 rounded-md py-1 text-xs font-medium transition-colors ${
               tab === "chapters"

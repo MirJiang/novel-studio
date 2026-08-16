@@ -163,7 +163,7 @@ export function CheckView({ projectId }: CheckViewProps) {
   return (
     <div className="flex min-h-0 flex-1">
       {/* 左：操作 + 历史 */}
-      <div className="flex w-72 shrink-0 flex-col bg-white/45">
+      <div className="flex w-72 shrink-0 flex-col bg-card/45">
         <div className="p-5">
           <h2 className="font-display text-lg font-bold tracking-tight text-ink">
             全书体检
@@ -172,7 +172,7 @@ export function CheckView({ projectId }: CheckViewProps) {
             检查设定冲突 / 时间线 / 伏笔台账 / 逻辑漏洞
           </p>
 
-          <div className="mt-4 rounded-xl bg-white/60 px-3 py-2.5 text-xs text-body shadow-card">
+          <div className="mt-4 rounded-xl bg-card/60 px-3 py-2.5 text-xs text-body shadow-card">
             摘要覆盖：
             <span
               className={`font-medium ${
@@ -192,7 +192,7 @@ export function CheckView({ projectId }: CheckViewProps) {
             <button
               disabled={busy}
               onClick={() => void runBatchSummaries()}
-              className="mt-3 w-full rounded-full bg-white/70 px-3 py-1.5 text-sm text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+              className="mt-3 w-full rounded-full bg-card/70 px-3 py-1.5 text-sm text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
             >
               补齐 {missing} 章摘要
             </button>
@@ -210,7 +210,7 @@ export function CheckView({ projectId }: CheckViewProps) {
           <div className="mt-5 border-t border-line pt-4">
             <p className="text-xs font-semibold text-muted">合规扫描</p>
             <textarea
-              className="mt-2 h-16 w-full resize-none rounded-[10px] bg-white/60 px-3 py-2 text-xs leading-5 shadow-card outline-none placeholder:text-faint focus:bg-surface"
+              className="mt-2 h-16 w-full resize-none rounded-[10px] bg-card/60 px-3 py-2 text-xs leading-5 shadow-card outline-none placeholder:text-faint focus:bg-surface"
               placeholder="敏感词，逗号或换行分隔，如：赌博, 黑帮"
               value={wordsText}
               onChange={(e) => setWordsText(e.target.value)}
@@ -218,7 +218,7 @@ export function CheckView({ projectId }: CheckViewProps) {
             <button
               disabled={busy || scanning || !wordsText.trim()}
               onClick={() => void runScan()}
-              className="mt-2 w-full rounded-full bg-white/70 px-3 py-1.5 text-sm text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+              className="mt-2 w-full rounded-full bg-card/70 px-3 py-1.5 text-sm text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
             >
               {scanning ? "扫描中…" : "扫描敏感内容"}
             </button>
@@ -233,7 +233,7 @@ export function CheckView({ projectId }: CheckViewProps) {
                 </p>
                 <div className="mt-1.5 max-h-44 overflow-y-auto">
                   {hits.map((h, i) => (
-                    <div key={i} className="rounded-lg bg-white/60 px-2.5 py-1.5 text-[11px] leading-4 text-muted shadow-card">
+                    <div key={i} className="rounded-lg bg-card/60 px-2.5 py-1.5 text-[11px] leading-4 text-muted shadow-card">
                       <span className="font-medium text-body">{h.title}</span>
                       <span className="mx-1 rounded bg-pred px-1 py-px text-[10px] text-pred-t">
                         {h.word}
@@ -262,7 +262,7 @@ export function CheckView({ projectId }: CheckViewProps) {
                   {batchProgress.current}/{batchProgress.total}
                 </span>
               </div>
-              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/8">
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track">
                 <div
                   className="h-full rounded-full bg-accent transition-all"
                   style={{
@@ -315,7 +315,7 @@ export function CheckView({ projectId }: CheckViewProps) {
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[760px] px-8 py-6">
           {note && (
-            <div className="mb-4 rounded-xl bg-white/60 px-3.5 py-2.5 text-[11px] leading-5 text-muted shadow-card">
+            <div className="mb-4 rounded-xl bg-card/60 px-3.5 py-2.5 text-[11px] leading-5 text-muted shadow-card">
               {note}
             </div>
           )}

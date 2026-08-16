@@ -179,7 +179,7 @@ export function StylesView({
                 <button
                   disabled={cardBusy || !tweak.trim()}
                   onClick={() => void genCard(true)}
-                  className="shrink-0 rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                  className="shrink-0 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
                 >
                   {cardBusy ? "调整中…" : "调整"}
                 </button>
@@ -215,7 +215,7 @@ export function StylesView({
             />
             <button
               onClick={() => fileRef.current?.click()}
-              className="shrink-0 rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+              className="shrink-0 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
             >
               导入 txt
             </button>
@@ -275,7 +275,7 @@ export function StylesView({
                     ) : (
                       <button
                         onClick={() => void applyToCurrent(s.id)}
-                        className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                        className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
                       >
                         应用到当前作品
                       </button>

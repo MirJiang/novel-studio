@@ -126,7 +126,7 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
                     .addOutlineItem(project.id, `节点 ${items.length + 1}`)
                     .then(refresh)
                 }
-                className="rounded-full bg-white/70 px-3 py-1 text-[11px] text-body shadow-card transition-colors hover:bg-hover"
+                className="rounded-full bg-card/70 px-3 py-1 text-[11px] text-body shadow-card transition-colors hover:bg-hover"
               >
                 ＋ 加节点
               </button>
@@ -147,7 +147,7 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
           {/* 进度条 */}
           {items.length > 0 && (
             <div className="mt-3 flex items-center gap-3">
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/8">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-track">
                 <div
                   className="h-full rounded-full bg-accent transition-all"
                   style={{
@@ -263,7 +263,7 @@ function OutlineCard({
         </button>
       </div>
       <textarea
-        className="mt-2 h-16 w-full resize-none rounded-lg bg-white/70 p-2 text-xs leading-5 text-body outline-none placeholder:text-faint focus:bg-surface"
+        className="mt-2 h-16 w-full resize-none rounded-lg bg-card/70 p-2 text-xs leading-5 text-body outline-none placeholder:text-faint focus:bg-surface"
         placeholder="本卷主线与关键转折…"
         value={content}
         onChange={(e) => {

@@ -136,7 +136,7 @@ export function PublishView({ projectId, chapters }: PublishViewProps) {
                   disabled={fillingId != null || c.word_count === 0}
                   title={c.word_count === 0 ? "章节还没有内容" : undefined}
                   onClick={() => void fill(c.id)}
-                  className="shrink-0 rounded-full bg-white/80 px-3.5 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                  className="shrink-0 rounded-full bg-card/80 px-3.5 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
                 >
                   {fillingId === c.id ? "填充中…" : "填充到后台"}
                 </button>
@@ -179,14 +179,14 @@ export function PublishView({ projectId, chapters }: PublishViewProps) {
                 </span>
                 <button
                   onClick={() => void api.openVideoFolder(v.id)}
-                  className="shrink-0 rounded-full bg-white/80 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                  className="shrink-0 rounded-full bg-card/80 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
                 >
                   打开文件夹
                 </button>
                 <button
                   disabled={fillingId != null}
                   onClick={() => void fillCaption(v.id)}
-                  className="shrink-0 rounded-full bg-white/80 px-3.5 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                  className="shrink-0 rounded-full bg-card/80 px-3.5 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
                 >
                   {fillingId === -v.id ? "填充中…" : "填充文案"}
                 </button>

@@ -20,7 +20,7 @@ const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
   paused: { label: "待继续", cls: "bg-pyellow text-pyellow-t" },
   done: { label: "完成", cls: "bg-pgreen text-pgreen-t" },
   error: { label: "失败", cls: "bg-pred text-pred-t" },
-  cancelled: { label: "已取消", cls: "bg-black/6 text-muted" },
+  cancelled: { label: "已取消", cls: "bg-track text-muted" },
 };
 
 function fmtTime(ts: number): string {
@@ -55,7 +55,7 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
           </span>
           {tasks.some((t) => ["done", "error", "cancelled"].includes(t.status)) && (
             <button
-              className="ml-auto rounded-full bg-white/70 px-3.5 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+              className="ml-auto rounded-full bg-card/70 px-3.5 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
               onClick={() =>
                 void act(() => api.clearFinishedTasks(), "已清理完结任务")
               }
@@ -89,7 +89,7 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
                   </span>
                   {active ? (
                     <button
-                      className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-pred-t shadow-card transition-colors hover:bg-surface"
+                      className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-pred-t shadow-card transition-colors hover:bg-surface"
                       onClick={() => void act(() => api.cancelTask(t.id))}
                     >
                       取消
@@ -108,7 +108,7 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
                       )}
                       {t.kind === "rewrite_chapters" && t.status === "done" && (
                         <button
-                          className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-pyellow-t shadow-card transition-colors hover:bg-surface"
+                          className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-pyellow-t shadow-card transition-colors hover:bg-surface"
                           onClick={() =>
                             void act(
                               () => api.rollbackRewriteTask(t.id),
@@ -121,7 +121,7 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
                       )}
                       {t.status !== "paused" && (
                         <button
-                          className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                          className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
                           onClick={() =>
                             void act(() => api.retryTask(t.id), "已重新入队")
                           }
@@ -140,7 +140,7 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
                         {t.progress_current}/{t.progress_total}
                       </span>
                     </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/8">
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-track">
                       <div
                         className="h-full rounded-full bg-accent transition-all"
                         style={{

@@ -64,7 +64,7 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
   return (
     <div className="flex min-h-0 flex-1">
       {/* 左：生成表单 */}
-      <div className="w-80 shrink-0 overflow-y-auto bg-white/45 p-5">
+      <div className="w-80 shrink-0 overflow-y-auto bg-card/45 p-5">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">
           封面工坊
         </h2>
@@ -80,7 +80,7 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
             </span>
           </span>
           <textarea
-            className="h-32 w-full resize-none rounded-xl bg-white/60 p-2.5 text-sm leading-6 shadow-card outline-none placeholder:text-faint focus:bg-surface"
+            className="h-32 w-full resize-none rounded-xl bg-card/60 p-2.5 text-sm leading-6 shadow-card outline-none placeholder:text-faint focus:bg-surface"
             placeholder={
               "留空：AI 会读作品简介/设定/正文，自动总结画面描述并回填到这里\n\n手填例：古风玄幻，少年剑客立于山巅，云海翻腾，远处金色雷霆划破夜空，大气磅礴，暗色调，高质量插画"
             }
@@ -94,7 +94,7 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
             书名
           </span>
           <input
-            className="w-full rounded-[10px] bg-white/60 px-2.5 py-2 text-sm shadow-card outline-none focus:bg-surface"
+            className="w-full rounded-[10px] bg-card/60 px-2.5 py-2 text-sm shadow-card outline-none focus:bg-surface"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
@@ -105,7 +105,7 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
             作者名
           </span>
           <input
-            className="w-full rounded-[10px] bg-white/60 px-2.5 py-2 text-sm shadow-card outline-none placeholder:text-faint focus:bg-surface"
+            className="w-full rounded-[10px] bg-card/60 px-2.5 py-2 text-sm shadow-card outline-none placeholder:text-faint focus:bg-surface"
             placeholder="会显示为「xxx 著」"
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
@@ -146,7 +146,7 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
             className="w-64 rounded-2xl shadow-lift"
           />
         ) : (
-          <div className="flex h-96 w-64 items-center justify-center rounded-2xl border border-dashed border-black/15 bg-white/45 text-sm text-faint">
+          <div className="flex h-96 w-64 items-center justify-center rounded-2xl border border-dashed border-black/15 bg-card/45 text-sm text-faint">
             封面预览
           </div>
         )}
@@ -206,7 +206,7 @@ function CoverThumb({
       {url ? (
         <img src={url} alt="历史封面" className="h-24 w-[72px] object-cover" />
       ) : (
-        <div className="h-24 w-[72px] animate-pulse bg-white/60" />
+        <div className="h-24 w-[72px] animate-pulse bg-card/60" />
       )}
     </button>
   );

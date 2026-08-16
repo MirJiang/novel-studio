@@ -92,7 +92,7 @@ export function AppRail(props: AppRailProps) {
         }
       />
 
-      <div className="my-1 h-px w-7 bg-black/8" />
+      <div className="my-1 h-px w-7 bg-track" />
 
       <RailItem
         label="视频"

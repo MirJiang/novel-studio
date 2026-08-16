@@ -277,7 +277,7 @@ export function AssistantPanel({
                 <button
                   disabled={applying}
                   onClick={() => setPreview(null)}
-                  className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-body shadow-card hover:bg-surface"
+                  className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card hover:bg-surface"
                 >
                   重写
                 </button>
@@ -386,7 +386,7 @@ export function AssistantPanel({
           disabled={!chapterId || busy || rewriting}
           title={chapterId ? `改写《${chapterTitle}》` : "先打开一个章节"}
           onClick={() => setRewriteOpen((v) => !v)}
-          className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+          className="shrink-0 rounded-full bg-card/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
         >
           改写本章
         </button>
@@ -394,7 +394,7 @@ export function AssistantPanel({
           disabled={busy || scopeBusy}
           title="按摘要链定位受影响章节，确认后批量改写"
           onClick={() => setScopeOpen((v) => !v)}
-          className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+          className="shrink-0 rounded-full bg-card/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
         >
           跨章改写
         </button>

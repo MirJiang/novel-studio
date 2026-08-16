@@ -142,7 +142,7 @@ function BookCard({
   };
 
   return (
-    <div className="group relative rounded-2xl bg-white/65 p-3 shadow-card transition-all duration-200 hover:-translate-y-1 hover:shadow-lift">
+    <div className="group relative rounded-2xl bg-card/65 p-3 shadow-card transition-all duration-200 hover:-translate-y-1 hover:shadow-lift">
       {/* 打开作品：封面 + 信息区整体是按钮（菜单是它的兄弟，不嵌套） */}
       <button
         className="block w-full text-left"
@@ -163,7 +163,7 @@ function BookCard({
               <span className="font-display text-xl leading-relaxed font-bold tracking-wider text-white/95">
                 {project.name}
               </span>
-              <span className="mt-auto self-start rounded-full bg-white/20 px-2.5 py-1 text-[10px] tracking-widest text-white/80 backdrop-blur">
+              <span className="mt-auto self-start rounded-full bg-card/20 px-2.5 py-1 text-[10px] tracking-widest text-white/80 backdrop-blur">
                 {project.description || "原创小说"}
               </span>
             </div>
@@ -282,7 +282,7 @@ function NewBookButton({
   return (
     <div className="relative">
       <button
-        className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+        className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
         onClick={() => setOpen((v) => !v)}
       >
         空白创建

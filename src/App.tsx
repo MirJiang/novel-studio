@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "./lib/api";
+import { applyUiPrefs } from "./lib/uiPrefs";
 import type { BootstrapDraft, Chapter, ChapterMeta, LoreEntry, OutlineItem, Project, Task } from "./types";
 import { Caption } from "./components/Caption";
 import { AppRail } from "./components/AppRail";
@@ -59,6 +60,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void applyUiPrefs(); // 主题/编辑器字体
     api.listProjects().then(setProjects).catch(console.error);
   }, []);
 
@@ -663,7 +665,7 @@ export default function App() {
                         AI 批量写章
                       </button>
                       <button
-                        className="rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+                        className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
                         onClick={() => void handleCreateChapter()}
                       >
                         手动创建第一章
@@ -725,7 +727,7 @@ export default function App() {
               {runningTask.progress_current}/{runningTask.progress_total}
             </span>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/8">
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-track">
             <div
               className="h-full rounded-full bg-accent transition-all"
               style={{
@@ -769,7 +771,7 @@ export default function App() {
       )}
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-ink/90 px-4 py-2 text-sm text-surface shadow-float backdrop-blur">
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-[#26262a]/90 px-4 py-2 text-sm text-surface shadow-float backdrop-blur">
           {toast}
         </div>
       )}

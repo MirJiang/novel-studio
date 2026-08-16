@@ -101,7 +101,7 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
           <label className="flex items-center gap-1.5">
             <span className="text-xs text-muted">分类</span>
             <select
-              className="rounded-lg bg-white/60 px-2 py-1.5 text-sm shadow-card outline-none"
+              className="rounded-lg bg-card/60 px-2 py-1.5 text-sm shadow-card outline-none"
               value={draft.category}
               onChange={(e) => update({ category: e.target.value })}
             >
@@ -133,7 +133,7 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
         </div>
         <div className="mt-3">
           <input
-            className="w-full rounded-[10px] bg-white/60 px-3 py-2 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
+            className="w-full rounded-[10px] bg-card/60 px-3 py-2 text-[13px] shadow-card outline-none placeholder:text-faint focus:bg-surface"
             placeholder="触发关键词，逗号分隔。前文出现这些词时自动注入本条（如：林夜,阿夜）"
             value={draft.keywords}
             onChange={(e) => update({ keywords: e.target.value })}
@@ -149,7 +149,7 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
               className="h-16 w-16 rounded-xl object-cover shadow-card"
             />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-white/60 text-[10px] text-faint shadow-card">
+            <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-card/60 text-[10px] text-faint shadow-card">
               无参考图
             </div>
           )}
@@ -157,7 +157,7 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
             <div className="flex items-center gap-2">
               <button
                 disabled={refBusy}
-                className="rounded-full bg-white/70 px-3 py-1 text-xs text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                className="rounded-full bg-card/70 px-3 py-1 text-xs text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
                 onClick={() => void uploadRefImage()}
               >
                 {refBusy ? "上传中…" : refThumb ? "更换参考图" : "上传参考图"}

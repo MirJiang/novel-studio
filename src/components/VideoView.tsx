@@ -274,7 +274,7 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
   return (
     <div className="flex min-h-0 flex-1">
       {/* 左：流水线 */}
-      <div className="flex w-[340px] shrink-0 flex-col overflow-y-auto bg-white/45 p-5">
+      <div className="flex w-[340px] shrink-0 flex-col overflow-y-auto bg-card/45 p-5">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">
           视频工坊
         </h2>
@@ -390,7 +390,7 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
                 <p className="mb-1.5 text-[11px] text-faint">{note}</p>
               )}
               <textarea
-                className="h-36 w-full resize-none rounded-xl bg-white/70 p-3 text-[13px] leading-6 text-body shadow-card outline-none placeholder:text-faint focus:bg-surface"
+                className="h-36 w-full resize-none rounded-xl bg-card/70 p-3 text-[13px] leading-6 text-body shadow-card outline-none placeholder:text-faint focus:bg-surface"
                 placeholder="口播稿（可手写），250~350 字对应 60~90 秒"
                 value={narration}
                 onChange={(e) => {
@@ -518,7 +518,7 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
                       {progress.current}/{progress.total}
                     </span>
                   </div>
-                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/8">
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track">
                     <div
                       className="h-full rounded-full bg-accent transition-all"
                       style={{
@@ -570,7 +570,7 @@ function ExtrasRow({
       <span className="w-8 text-[11px] text-muted">{label}</span>
       <button
         onClick={onPick}
-        className="rounded-full bg-white/80 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-surface"
+        className="rounded-full bg-card/80 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-surface"
       >
         {path ? "更换" : "选择"}
       </button>
@@ -597,7 +597,7 @@ function StatusTag({ status }: { status: string }) {
   const map: Record<string, [string, string]> = {
     done: ["已完成", "bg-pgreen text-pgreen-t"],
     error: ["出错", "bg-pred text-pred-t"],
-    draft: ["草稿", "bg-black/6 text-muted"],
+    draft: ["草稿", "bg-track text-muted"],
   };
   const [label, cls] = map[status] ?? ["进行中", "bg-pyellow text-pyellow-t"];
   return (
@@ -649,7 +649,7 @@ function StageButton({
       className={`flex items-center justify-between rounded-full px-4 py-2 text-[13px] transition-colors disabled:opacity-40 ${
         primary
           ? "bg-accent font-semibold text-surface shadow-glow hover:bg-accent-h"
-          : "bg-white/70 text-body shadow-card hover:bg-surface"
+          : "bg-card/70 text-body shadow-card hover:bg-surface"
       }`}
     >
       {label}
@@ -710,7 +710,7 @@ function ShotCard({
             disabled={busy || !shot.image_path}
             title={shot.image_path ? "用镜头图生成/重跑视频（约 1~2 分钟）" : "先生成镜头图"}
             onClick={onRerunVideo}
-            className="ml-auto rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
+            className="ml-auto rounded-full bg-card/70 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40"
           >
             {busy ? "处理中…" : shot.video_path ? "重跑视频" : "出视频"}
           </button>
@@ -718,7 +718,7 @@ function ShotCard({
         <button
           disabled={busy}
           onClick={onRedraw}
-          className={`${videoMode ? "" : "ml-auto "}rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40`}
+          className={`${videoMode ? "" : "ml-auto "}rounded-full bg-card/70 px-2.5 py-0.5 text-[11px] text-body shadow-card transition-colors hover:bg-hover disabled:opacity-40`}
         >
           {busy ? "绘图中…" : shot.image_path ? "重绘" : "生图"}
         </button>
@@ -770,7 +770,7 @@ function Preview({
           />
           <div className="mt-4 flex items-center gap-3">
             <button
-              className="rounded-full bg-white/70 px-4 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+              className="rounded-full bg-card/70 px-4 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
               onClick={() => void api.openVideoFolder(detail!.video.id)}
             >
               打开所在文件夹
@@ -789,7 +789,7 @@ function Preview({
               className="max-h-[62vh] rounded-2xl shadow-lift"
             />
           ) : (
-            <div className="flex h-96 w-56 items-center justify-center rounded-2xl bg-white/45 text-sm text-faint">
+            <div className="flex h-96 w-56 items-center justify-center rounded-2xl bg-card/45 text-sm text-faint">
               镜头 {shot.idx} 尚未配图
             </div>
           )}

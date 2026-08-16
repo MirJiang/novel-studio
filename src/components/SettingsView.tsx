@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { applyUiPrefs } from "../lib/uiPrefs";
 
 interface FieldDef {
   key: string;
@@ -109,7 +110,12 @@ const SECTIONS: SectionDef[] = [
 export function SettingsView() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
-  const [activeId, setActiveId] = useState("llm");
+  const [activeId, setActiveId] = useState("general");
+
+  // 常规（即时生效，不走保存按钮）
+  const [theme, setTheme] = useState("light");
+  const [font, setFont] = useState("serif");
+  const [fontSize, setFontSize] = useState("17");
 
   useEffect(() => {
     void (async () => {
@@ -120,8 +126,17 @@ export function SettingsView() {
         }
       }
       setValues(next);
+      setTheme((await api.getSetting("ui_theme")) ?? "light");
+      setFont((await api.getSetting("editor_font")) ?? "serif");
+      setFontSize((await api.getSetting("editor_font_size")) ?? "17");
     })();
   }, []);
+
+  /** 常规项：写入设置 + 立即应用 */
+  const applyPref = async (key: string, value: string) => {
+    await api.setSetting(key, value);
+    await applyUiPrefs();
+  };
 
   const save = async () => {
     for (const g of SECTIONS) {
@@ -142,6 +157,16 @@ export function SettingsView() {
         <h1 className="px-2 pb-3 text-[15px] font-bold tracking-tight text-ink">
           设置
         </h1>
+        <button
+          onClick={() => setActiveId("general")}
+          className={`block w-full rounded-[10px] px-2.5 py-2 text-left text-[13px] transition-colors ${
+            activeId === "general"
+              ? "bg-surface font-semibold text-ink shadow-card"
+              : "text-body hover:bg-hover"
+          }`}
+        >
+          常规
+        </button>
         {SECTIONS.map((s) => (
           <button
             key={s.id}
@@ -156,7 +181,7 @@ export function SettingsView() {
           </button>
         ))}
 
-        <div className="my-2 mx-2.5 h-px bg-black/8" />
+        <div className="my-2 mx-2.5 h-px bg-track" />
 
         <button
           onClick={() => setActiveId("accounts")}
@@ -167,7 +192,7 @@ export function SettingsView() {
           }`}
         >
           平台账号
-          <span className="rounded-full bg-black/6 px-1.5 py-px text-[9px] text-muted">
+          <span className="rounded-full bg-track px-1.5 py-px text-[9px] text-muted">
             规划中
           </span>
         </button>
@@ -180,8 +205,73 @@ export function SettingsView() {
       {/* 右侧：当前分类 */}
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="max-w-[560px] px-8 pt-6 pb-16">
-          {activeId === "accounts" ? (
-            <section className="rounded-2xl bg-white/45 p-6">
+          {activeId === "general" ? (
+            <section className="rounded-2xl bg-surface p-6 shadow-card">
+              <h3 className="text-[15px] font-semibold text-ink">常规</h3>
+              <p className="mt-1 text-xs text-muted">即时生效，不用点保存</p>
+
+              <p className="mt-5 text-xs font-medium text-muted">主题</p>
+              <div className="mt-1.5 flex w-64 gap-1 rounded-full bg-canvas p-1">
+                {([["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    onClick={() => {
+                      setTheme(v);
+                      void applyPref("ui_theme", v);
+                    }}
+                    className={`flex-1 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
+                      theme === v
+                        ? "bg-surface font-semibold text-ink shadow-card"
+                        : "text-muted hover:text-body"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <p className="mt-5 text-xs font-medium text-muted">编辑器正文字体</p>
+              <div className="mt-1.5 flex w-80 gap-1 rounded-full bg-canvas p-1">
+                {([["serif", "衬线（宋体系）"], ["sans", "黑体"], ["kai", "楷体"]] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    onClick={() => {
+                      setFont(v);
+                      void applyPref("editor_font", v);
+                    }}
+                    className={`flex-1 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
+                      font === v
+                        ? "bg-surface font-semibold text-ink shadow-card"
+                        : "text-muted hover:text-body"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <p className="mt-5 text-xs font-medium text-muted">正文字号</p>
+              <div className="mt-1.5 flex w-64 gap-1 rounded-full bg-canvas p-1">
+                {(["15", "17", "19", "21"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => {
+                      setFontSize(v);
+                      void applyPref("editor_font_size", v);
+                    }}
+                    className={`flex-1 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
+                      fontSize === v
+                        ? "bg-surface font-semibold text-ink shadow-card"
+                        : "text-muted hover:text-body"
+                    }`}
+                  >
+                    {v}px
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : activeId === "accounts" ? (
+            <section className="rounded-2xl bg-card/45 p-6">
               <h3 className="text-[15px] font-semibold text-muted">平台账号</h3>
               <p className="mt-2 text-xs leading-6 text-muted">
                 小说平台账号绑定、授权与分发管理将随 v0.5 提供（抖音 / TikTok /

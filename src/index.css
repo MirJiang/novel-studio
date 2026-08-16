@@ -5,6 +5,8 @@
   --color-canvas: #f2f3f6; /* 冷调浅灰底 */
   --color-surface: #ffffff;
   --color-surface2: #f9f9fb;
+  --color-card: #ffffff; /* 半透明卡片底（bg-card/60 等），深色模式下变深 */
+  --color-track: rgba(0, 0, 0, 0.07); /* 进度条轨道/分隔 */
   --color-hover: rgba(255, 255, 255, 0.6); /* 悬停：雾白 */
   --color-line: rgba(60, 60, 90, 0.08); /* 极浅分隔（尽量少用） */
   --color-ink: #1c1c1e;
@@ -35,6 +37,50 @@
   --shadow-lift: 0 16px 36px rgba(60, 60, 90, 0.16);
   --shadow-float: 0 12px 32px rgba(30, 30, 40, 0.18);
   --shadow-glow: 0 4px 14px rgba(0, 122, 255, 0.32);
+}
+
+/* ===== 深色主题：只覆盖令牌，组件不用动 ===== */
+:root[data-theme="dark"] {
+  --color-canvas: #161618;
+  --color-surface: #242426;
+  --color-surface2: #2e2e30;
+  --color-card: #2e2e32;
+  --color-track: rgba(255, 255, 255, 0.1);
+  --color-hover: rgba(255, 255, 255, 0.07);
+  --color-line: rgba(255, 255, 255, 0.09);
+  --color-ink: #f2f2f7;
+  --color-body: #d4d4d8;
+  --color-muted: #9c9ca2;
+  --color-faint: #6e6e74;
+
+  --color-accent: #0a84ff;
+  --color-accent-h: #2f97ff;
+  --color-accent-soft: rgba(10, 132, 255, 0.2);
+
+  --color-pblue: #16334a;
+  --color-pblue-t: #7ec3f0;
+  --color-pgreen: #16301d;
+  --color-pgreen-t: #8fd69a;
+  --color-pyellow: #3a2f12;
+  --color-pyellow-t: #f0c860;
+  --color-pred: #3d1c1d;
+  --color-pred-t: #f08a88;
+
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 16px 36px rgba(0, 0, 0, 0.5);
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --shadow-glow: 0 4px 14px rgba(10, 132, 255, 0.4);
+}
+
+:root[data-theme="dark"] ::selection {
+  background: rgba(10, 132, 255, 0.35);
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border: 3px solid transparent;
+  border-radius: 99px;
+  background-clip: content-box;
 }
 
 body {
@@ -75,15 +121,18 @@ body {
   background: transparent;
 }
 
-/* TipTap 写作区：衬线字体更接近阅读体验 */
+/* TipTap 写作区：字体/字号走设置（uiPrefs 注入 --editor-*） */
 .tiptap {
   outline: none;
   min-height: 60vh;
-  font-size: 17px;
+  font-size: var(--editor-font-size, 17px);
   line-height: 2;
-  font-family: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC",
-    "STSong", "SimSun", serif;
-  color: #2c2c2e;
+  font-family: var(
+    --editor-font,
+    "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", "SimSun",
+    serif
+  );
+  color: var(--color-body);
 }
 
 .tiptap p {
