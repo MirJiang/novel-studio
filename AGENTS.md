@@ -203,7 +203,7 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 2. 生图 API 的 `size` 参数各家要求不同：封面写死 `1536x2048`（image_gen.rs `COVER_SIZE`），
    分镜写死 `1080x1920`（commands_video.rs `SHOT_SIZE`），若火山方舟报错，按实际开通模型调
 3. 封面字体依赖 Windows 系统字体（msyhbd.ttc→msyh.ttc→simhei→simsun），打包给用户用没问题，跨平台时要改
-4. 应用图标是纯色占位图（`app-icon.png` + `pnpm tauri icon` 重新生成）
+4. 应用图标由 `scripts/gen-app-icon.py` 生成（PIL 绘制：渐变底+打开的书），改图后 `pnpm tauri icon app-icon.png` 重新生成全套并重新编译 exe 才生效
 5. tauri-build 需要 `icons/icon.ico` 存在，删图标目录会导致构建失败
 6. API Key 目前明文存 SQLite（本地单机可接受，商业化前要加密）
 7. 前端 bundle 约 520KB（主要是 TipTap），桌面端可接受，后期可 code-split
