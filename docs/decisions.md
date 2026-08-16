@@ -255,3 +255,32 @@
 - 改写后自动重生成该章摘要：摘要链是续写/体检/定位的数据地基，断了全书上下文就失真
 - 改写 prompt 带前后章摘要并声明"不得矛盾"保连贯；>8000 字长章跳过并在结果里说明
 - 合规扫描是确定性文本检索（不调 LLM，零成本零误判争议），命中清单 → 复用跨章改写入队
+
+## D27. 模型接入协议只两套：OpenAI 兼容 + Anthropic，不为厂商写私有协议
+
+- 文本模型：`llm.rs` 抽象 `LlmProtocol`（OpenAI chat/completions / Anthropic messages），
+  `stream_chat`/`chat_once` 按协议分发；国内外主流与自定义中转（one-api/new-api/OpenRouter）
+  都走这两套标准协议接入，模型覆盖面靠"协议兼容 + 自定义配置"而不是堆厂商 SDK
+- Anthropic 适配点：system 抽独立字段、user/assistant 强制交替（连续同角色合并）、
+  max_tokens 必填（取 8192 安全值）、SSE 按事件类型解析（content_block_delta / message_stop）
+- 协议选择：`llm_protocol` 设置项（openai/anthropic/空=按域名自动识别，含 anthropic 即 Claude）；
+  设置页提供厂商预设下拉（DeepSeek/OpenAI/Claude/通义/Kimi/智谱/OpenRouter）一键填地址
+- 例外（生图侧唯一）：阿里云 wan2.x-image 在百炼/Token 套餐域名下没有任何 OpenAI 协议入口
+  （实测 images/generations 与 chat/completions 均 400），`image_gen.rs` 按 aliyuncs.com 域名
+  自动走 DashScope 原生多模态端点——这是"不修就没法用"的适配，不是新协议方向；
+  图生视频（video_gen.rs）暂只有方舟协议，阿里云视频模型未适配
+
+## D28. 视频一致性工程：统一画风字段 + 角色三视图 + 防漂移默认（源自 2026-08 调研）
+
+- 调研存档 `docs/research-video-2026-08.md`：纯文生视频多镜头一致性 2026 年仍不可用，
+  行业共识 = 分镜生图锚定风格 → 图生视频（首帧）3~5s 短镜拼接 → 合成，本项目路线不动
+- `videos.style`（v13）：全片统一画风，**生成期注入**每个镜头的生图 prompt
+  （`{prompt}，{style}，竖版构图，画面中无文字`）——风格与内容解耦，用户改 prompt 不用背风格词；
+  分镜 LLM 被明确要求不写画风词（旧版把「古风玄幻插画」写死在 system prompt 里，换个题材就错）
+- 角色三视图：`generate_lore_ref_image` 按词条内容一键出正/侧/背人设图（1920x1080）存为参考图——
+  实测三视图参考比单图跨镜一致性明显更稳；分镜生图与图生视频共用同一套命中逻辑
+  （`matched_lore_ref_paths`，≤3 张，参考图过多反而漂移）
+- 图生视频携带角色参考图走 Seedance 2.x `reference_image`；老模型不认该角色时
+  创建失败自动降级为无参考重试一次（不多花生成费，只多一次创建请求）
+- 运动收敛词写死在运动 prompt（"镜头运动缓慢轻微…不变形不换脸不串色"）——
+  运动幅度过大是崩坏主因；镜头时长 `video_duration` 设置项默认 5s（3~15 夹紧）

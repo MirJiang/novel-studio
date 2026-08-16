@@ -27,6 +27,8 @@ export interface Style {
   guide: string;
   /** 代表性示例片段 */
   example: string;
+  /** 类别：text=写作 / image=图片画风 / video=视频运镜 */
+  kind: string;
   created_at: number;
   updated_at: number;
 }
@@ -173,6 +175,10 @@ export interface Video {
   status: string;
   /** image = 静图运镜（默认）/ video = 图生视频（Seedance 按量计费） */
   mode: string;
+  /** 全片统一画风（如"古风玄幻插画"），空 = 默认后缀；生成期注入每个镜头 */
+  style: string;
+  /** 运镜风格（如"手持呼吸感"），空 = 只用默认收敛词 */
+  motion_style: string;
   /** BGM 文件路径（空 = 无） */
   bgm_path: string;
   /** BGM 音量百分比（相对配音轨） */

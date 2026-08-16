@@ -62,10 +62,7 @@ pub async fn distill_style(
                 只输出风格卡本身，不要复述剧情、不要提及具体角色名和书名。"
                     .to_string(),
             ),
-            (
-                "user".to_string(),
-                format!("【小说样本】\n{excerpt}"),
-            ),
+            ("user".to_string(), format!("【小说样本】\n{excerpt}")),
         ],
     )
     .await
@@ -83,6 +80,7 @@ pub async fn distill_style(
         sample.chars().count() as i64,
         guide.trim(),
         example.trim(),
+        "text",
     )
     .map_err(|e| e.to_string())
 }
@@ -110,15 +108,36 @@ const STYLE_CARD_SYSTEM: &str = "你是文学风格分析师兼作家。按用�
 【整体基调】【句式与节奏】【用词偏好】【叙事视角】【对话风格】【钩子与爽点】\n\
 只输出风格卡本身，不要解释。";
 
-/// 对话生成风格卡：纯描述出卡；带 previous_guide + tweak 时是微调（输出调整后的完整卡）
+/// 图片画风卡：产出可直接注入生图 prompt 的画风锚点词
+const IMAGE_CARD_SYSTEM: &str = "你是 AI 绘画提示词专家。按用户的描述产出一组画风锚点词，\
+用于注入文生图 prompt 统一全片画风。\
+要求：只写风格/质感/光影/色调/构图类词语（如「日系赛璐璐，干净平涂，柔和光影」），\
+不写任何具体人物/场景内容；总长度 60 字以内；可用「杜绝 XX 感」类否定词。\
+只输出锚点词本身，不要解释、不要序号。";
+
+/// 视频运镜卡：产出可注入图生视频运动 prompt 的运镜锚点词
+const VIDEO_CARD_SYSTEM: &str = "你是视频分镜导演。按用户的描述产出一组运镜锚点词，\
+用于注入图生视频的运动提示词。\
+要求：描述镜头运动方式与幅度（如「手持镜头，保持极其微弱、类似呼吸般的浮动」），\
+收敛运动幅度（极缓/轻微类限定词），不写画面内容；总长度 40 字以内。\
+只输出锚点词本身，不要解释、不要序号。";
+
+/// 对话生成风格卡：纯描述出卡；带 previous_guide + tweak 时是微调（输出调整后的完整卡）。
+/// kind = text（默认，写作风格卡）/ image（画风锚点词）/ video（运镜锚点词）
 #[tauri::command]
 pub async fn generate_style_card(
     db: State<'_, Db>,
     guidance: String,
     previous_guide: Option<String>,
     tweak: Option<String>,
+    kind: Option<String>,
 ) -> Result<String, String> {
     let cfg = load_llm_config(&db);
+    let system = match kind.as_deref().map(str::trim) {
+        Some("image") => IMAGE_CARD_SYSTEM,
+        Some("video") => VIDEO_CARD_SYSTEM,
+        _ => STYLE_CARD_SYSTEM,
+    };
     let user = match (previous_guide, tweak) {
         (Some(prev), Some(tw)) if !prev.trim().is_empty() && !tw.trim().is_empty() => format!(
             "【已有风格卡】\n{}\n\n【调整要求】\n{}\n\n输出调整后的完整风格卡（格式不变）。",
@@ -130,7 +149,7 @@ pub async fn generate_style_card(
     llm::chat_once(
         cfg,
         vec![
-            ("system".to_string(), STYLE_CARD_SYSTEM.to_string()),
+            ("system".to_string(), system.to_string()),
             ("user".to_string(), user),
         ],
     )
@@ -138,13 +157,14 @@ pub async fn generate_style_card(
     .map_err(|e| e.to_string())
 }
 
-/// 保存对话生成的风格卡
+/// 保存风格卡（对话生成的写作风格，或前端内置预设一键添加的图片/视频风格）
 #[tauri::command]
 pub fn save_style_card(
     db: State<'_, Db>,
     name: String,
     source: String,
     guide: String,
+    kind: Option<String>,
 ) -> Result<Style, String> {
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -153,6 +173,11 @@ pub fn save_style_card(
     if guide.trim().is_empty() {
         return Err("风格卡内容为空".to_string());
     }
-    db.create_style(&name, source.trim(), 0, guide.trim(), "")
+    let kind = match kind.as_deref().map(str::trim) {
+        Some("image") => "image",
+        Some("video") => "video",
+        _ => "text",
+    };
+    db.create_style(&name, source.trim(), 0, guide.trim(), "", kind)
         .map_err(|e| e.to_string())
 }

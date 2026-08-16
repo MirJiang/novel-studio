@@ -17,6 +17,7 @@ import { OutlineView } from "./components/OutlineView";
 import { SettingsView } from "./components/SettingsView";
 import { StylesView } from "./components/StylesView";
 import { Bookshelf } from "./components/Bookshelf";
+import { BookDetailView } from "./components/BookDetailView";
 import { AICreateWizard } from "./components/AICreateWizard";
 import { AssistantPanel } from "./components/AssistantPanel";
 import {
@@ -38,12 +39,19 @@ type View =
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  /** 最近打开的书：回书架不清空，体检/视频/发布在书架也能带着它直达 */
+  const [lastProjectId, setLastProjectId] = useState<number | null>(null);
+  /** 从书架直达到目标工坊：项目切换 effect 会重置视图，用它把目标视图带过去 */
+  const pendingViewRef = useRef<View>(null);
+  /** 工坊选书面板：点体检/视频/发布但没有任何书上下文时，让用户挑一本 */
+  const [workshopPicker, setWorkshopPicker] = useState<View>(null);
   const [chapters, setChapters] = useState<ChapterMeta[]>([]);
   const [loreEntries, setLoreEntries] = useState<LoreEntry[]>([]);
   const [outlineItems, setOutlineItems] = useState<OutlineItem[]>([]);
   const [view, setView] = useState<View>(null);
   const [settingsOpen, setSettingsOpen] = useState(false); // 设置页（整页路由，非弹窗）
   const [stylesOpen, setStylesOpen] = useState(false); // 风格库（整页路由，全局）
+  const [detailId, setDetailId] = useState<number | null>(null); // 书籍详情覆盖层（书架 ⋯ 菜单）
   const [wizardOpen, setWizardOpen] = useState(false); // AI 起书向导（覆盖层，常驻挂载不丢对话）
   const [wizardEverOpened, setWizardEverOpened] = useState(false);
   const [wizardEpoch, setWizardEpoch] = useState(0); // 创建成功后 +1 重置对话
@@ -62,6 +70,11 @@ export default function App() {
   useEffect(() => {
     void applyUiPrefs(); // 主题/编辑器字体
     api.listProjects().then(setProjects).catch(console.error);
+    // 恢复最近打开的书（体检/视频/发布从书架直达用）
+    void api.getSetting("last_project").then((v) => {
+      const id = v ? parseInt(v, 10) : NaN;
+      if (Number.isFinite(id)) setLastProjectId(id);
+    });
   }, []);
 
   const refreshChapters = useCallback(async (projectId: number) => {
@@ -96,10 +109,14 @@ export default function App() {
       setView(null);
       return;
     }
+    setLastProjectId(currentProjectId);
+    void api.setSetting("last_project", String(currentProjectId));
     void refreshChapters(currentProjectId);
     void refreshLore(currentProjectId);
     void refreshOutline(currentProjectId);
-    setView(null);
+    const pending = pendingViewRef.current;
+    pendingViewRef.current = null;
+    setView(pending);
   }, [currentProjectId, refreshChapters, refreshLore, refreshOutline]);
 
   // ---------- 作品 ----------
@@ -352,20 +369,29 @@ export default function App() {
   const currentChapterId = view?.kind === "chapter" ? view.chapter.id : null;
   const currentLoreId = view?.kind === "lore" ? view.entry.id : null;
 
-  // 记住最近打开的章节，供导航栏「写作」恢复视图
-  const lastChapterRef = useRef<Chapter | null>(null);
-  useEffect(() => {
-    if (view?.kind === "chapter") lastChapterRef.current = view.chapter;
-  }, [view]);
-
-  const handleGoWrite = () => {
-    if (view?.kind === "chapter" || view?.kind === "lore") return;
-    const last = lastChapterRef.current;
-    if (last && chapters.some((c) => c.id === last.id)) {
-      void handleSelectChapter(last.id);
-    } else if (chapters.length > 0) {
-      void handleSelectChapter(chapters[0].id);
+  /** 进整页工坊（体检/视频/发布）：在书内直接切；在书架则带最近打开的书直达 */
+  const goWorkshop = (target: View) => {
+    setSettingsOpen(false);
+    setStylesOpen(false);
+    setTasksOpen(false);
+    if (currentProjectId != null) {
+      setView(target);
+    } else if (
+      lastProjectId != null &&
+      projects.some((p) => p.id === lastProjectId)
+    ) {
+      pendingViewRef.current = target;
+      setCurrentProjectId(lastProjectId);
+    } else {
+      setWorkshopPicker(target); // 没有上下文：挑一本再进
     }
+  };
+
+  /** 工坊页内切换作品：换书但停在当前工坊视图 */
+  const switchWorkshopProject = (id: number) => {
+    if (id === currentProjectId) return;
+    pendingViewRef.current = view;
+    setCurrentProjectId(id);
   };
 
   /** 从书架进入作品：恢复上次的阅读位置（章节 + 滚动位置），没存过则打开最新一章 */
@@ -412,35 +438,7 @@ export default function App() {
     showToast("已替换原文并更新摘要");
   };
 
-  // 标题栏面包屑：作品名 / 当前视图
   const currentProject = projects.find((p) => p.id === currentProjectId);
-  const viewLabel =
-    view?.kind === "chapter"
-      ? view.chapter.title
-      : view?.kind === "lore"
-        ? view.entry.title
-            : view?.kind === "cover"
-              ? "封面工坊"
-              : view?.kind === "outline"
-                ? "作品大纲"
-                : view?.kind === "check"
-                ? "全书体检"
-                : view?.kind === "video"
-                  ? "视频工坊"
-                  : view?.kind === "publish"
-                    ? "发布"
-                    : null;
-  const crumb = settingsOpen
-    ? "设置"
-    : tasksOpen
-      ? "任务"
-      : stylesOpen
-        ? "风格库"
-        : currentProject == null
-          ? undefined
-          : viewLabel
-            ? `${currentProject.name}  /  ${viewLabel}`
-            : currentProject.name;
 
   // ---------- 导出 ----------
 
@@ -462,12 +460,15 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-canvas text-body">
-      <Caption crumb={crumb} />
+      <Caption />
 
       <div className="flex min-h-0 flex-1">
         <AppRail
           onShelf={!settingsOpen && !stylesOpen && !tasksOpen && currentProjectId == null}
-          hasProject={currentProjectId != null}
+          hasProject={
+            currentProjectId != null ||
+            (lastProjectId != null && projects.some((p) => p.id === lastProjectId))
+          }
           settingsActive={settingsOpen}
           stylesActive={stylesOpen}
           tasksActive={tasksOpen}
@@ -475,17 +476,13 @@ export default function App() {
           activeView={
             settingsOpen || stylesOpen || tasksOpen
               ? null
-              : view?.kind === "cover"
-                ? "cover"
-                : view?.kind === "check"
+              : view?.kind === "check"
                   ? "check"
                   : view?.kind === "video"
                     ? "video"
                     : view?.kind === "publish"
                       ? "publish"
-                      : view?.kind === "chapter" || view?.kind === "lore"
-                        ? "write"
-                        : null
+                      : null
           }
           onGoShelf={() => {
             setSettingsOpen(false);
@@ -493,36 +490,9 @@ export default function App() {
             setTasksOpen(false);
             setCurrentProjectId(null);
           }}
-          onGoWrite={() => {
-            setSettingsOpen(false);
-            setStylesOpen(false);
-            setTasksOpen(false);
-            handleGoWrite();
-          }}
-          onGoCover={() => {
-            setSettingsOpen(false);
-            setStylesOpen(false);
-            setTasksOpen(false);
-            setView({ kind: "cover" });
-          }}
-          onGoCheck={() => {
-            setSettingsOpen(false);
-            setStylesOpen(false);
-            setTasksOpen(false);
-            setView({ kind: "check" });
-          }}
-          onGoVideo={() => {
-            setSettingsOpen(false);
-            setStylesOpen(false);
-            setTasksOpen(false);
-            setView({ kind: "video" });
-          }}
-          onGoPublish={() => {
-            setSettingsOpen(false);
-            setStylesOpen(false);
-            setTasksOpen(false);
-            setView({ kind: "publish" });
-          }}
+          onGoCheck={() => goWorkshop({ kind: "check" })}
+          onGoVideo={() => goWorkshop({ kind: "video" })}
+          onGoPublish={() => goWorkshop({ kind: "publish" })}
           onGoStyles={() => {
             setSettingsOpen(false);
             setTasksOpen(false);
@@ -567,6 +537,7 @@ export default function App() {
           <Bookshelf
             projects={projects}
             onOpen={(id) => void handleOpenProject(id)}
+            onDetail={(id) => setDetailId(id)}
             onCreate={(name, total, per, styleId) =>
               void handleCreateProject(name, total, per, styleId)
             }
@@ -598,6 +569,7 @@ export default function App() {
                 onCreateLore={() => void handleCreateLore()}
                 onDeleteLore={(id) => void handleDeleteLore(id)}
                 onSelectOutline={() => setView({ kind: "outline" })}
+                onSelectCover={() => setView({ kind: "cover" })}
               />
             )}
 
@@ -626,7 +598,14 @@ export default function App() {
                   projectName={currentProject?.name ?? ""}
                 />
               ) : view?.kind === "check" ? (
-                <CheckView key={currentProjectId} projectId={currentProjectId} />
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <WorkshopBar
+                    projects={projects}
+                    currentId={currentProjectId}
+                    onSwitch={switchWorkshopProject}
+                  />
+                  <CheckView key={currentProjectId} projectId={currentProjectId} />
+                </div>
               ) : view?.kind === "outline" && currentProject != null ? (
                 <OutlineView
                   key={currentProjectId}
@@ -637,17 +616,31 @@ export default function App() {
                   }}
                 />
               ) : view?.kind === "video" ? (
-                <VideoView
-                  key={currentProjectId}
-                  projectId={currentProjectId}
-                  chapters={chapters}
-                />
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <WorkshopBar
+                    projects={projects}
+                    currentId={currentProjectId}
+                    onSwitch={switchWorkshopProject}
+                  />
+                  <VideoView
+                    key={currentProjectId}
+                    projectId={currentProjectId}
+                    chapters={chapters}
+                  />
+                </div>
               ) : view?.kind === "publish" ? (
-                <PublishView
-                  key={currentProjectId}
-                  projectId={currentProjectId}
-                  chapters={chapters}
-                />
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <WorkshopBar
+                    projects={projects}
+                    currentId={currentProjectId}
+                    onSwitch={switchWorkshopProject}
+                  />
+                  <PublishView
+                    key={currentProjectId}
+                    projectId={currentProjectId}
+                    chapters={chapters}
+                  />
+                </div>
               ) : chapters.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center">
                   <div className="text-center">
@@ -770,6 +763,73 @@ export default function App() {
         </div>
       )}
 
+      {/* 书籍详情：整页覆盖层（书架 ⋯ 菜单「作品详情」） */}
+      {detailId != null &&
+        (() => {
+          const p = projects.find((x) => x.id === detailId);
+          if (!p) return null;
+          return (
+            <div className="fixed inset-x-0 bottom-0 top-11 z-40">
+              <BookDetailView
+                project={p}
+                onClose={() => setDetailId(null)}
+                onOpenWrite={(id) => {
+                  setDetailId(null);
+                  void handleOpenProject(id);
+                }}
+              />
+            </div>
+          );
+        })()}
+
+      {/* 工坊选书面板：无最近书籍上下文时，点导航先挑书 */}
+      {workshopPicker != null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={() => setWorkshopPicker(null)}
+        >
+          <div
+            className="mx-4 w-full max-w-sm rounded-2xl bg-surface p-5 shadow-float"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center">
+              <p className="text-[14px] font-semibold text-ink">选择作品</p>
+              <button
+                className="ml-auto text-faint hover:text-body"
+                onClick={() => setWorkshopPicker(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-3 max-h-72 overflow-y-auto">
+              {projects.length === 0 && (
+                <p className="py-6 text-center text-[13px] text-faint">
+                  还没有作品，先到书架创建一本
+                </p>
+              )}
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  className="block w-full rounded-[10px] px-3 py-2.5 text-left transition-colors hover:bg-hover"
+                  onClick={() => {
+                    pendingViewRef.current = workshopPicker;
+                    setWorkshopPicker(null);
+                    setCurrentProjectId(p.id);
+                  }}
+                >
+                  <span className="block truncate text-[13px] font-medium text-ink">
+                    {p.name}
+                  </span>
+                  <span className="text-[11px] text-faint">
+                    {p.description || "原创小说"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-[#26262a]/90 px-4 py-2 text-sm text-surface shadow-float backdrop-blur">
           {toast}
@@ -798,6 +858,70 @@ export default function App() {
             }}
           />
         </div>
+      )}
+    </div>
+  );
+}
+
+/** 整页工坊顶部的作品切换条：换书后停在当前工坊（pendingView 带过去） */
+function WorkshopBar({
+  projects,
+  currentId,
+  onSwitch,
+}: {
+  projects: Project[];
+  currentId: number | null;
+  onSwitch: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = projects.find((p) => p.id === currentId);
+  return (
+    <div className="relative flex items-center px-4 pt-3">
+      <button
+        className="flex items-center gap-2 rounded-full bg-card/70 py-1.5 pl-3 pr-2.5 shadow-card transition-colors hover:bg-surface"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-muted">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+        <span className="max-w-48 truncate text-xs font-medium text-ink">
+          {current?.name ?? "选择作品"}
+        </span>
+        <svg viewBox="0 0 12 12" className={`h-3 w-3 text-faint transition-transform ${open ? "rotate-180" : ""}`}>
+          <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute left-4 top-full z-40 mt-1 max-h-72 w-56 overflow-y-auto rounded-xl bg-surface py-1 shadow-float">
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover ${
+                  p.id === currentId ? "bg-accent-soft/60" : ""
+                }`}
+                onClick={() => {
+                  setOpen(false);
+                  onSwitch(p.id);
+                }}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium text-ink">
+                    {p.name}
+                  </span>
+                  <span className="block truncate text-[11px] text-faint">
+                    {p.description || "原创小说"}
+                  </span>
+                </span>
+                {p.id === currentId && (
+                  <span className="shrink-0 text-accent">✓</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

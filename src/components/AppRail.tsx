@@ -3,8 +3,8 @@ interface AppRailProps {
   onShelf: boolean;
   /** 是否已打开作品（决定书籍相关项是否可用） */
   hasProject: boolean;
-  /** 当前主视图（写作=章节/设定，封面，体检，视频，发布） */
-  activeView: "write" | "cover" | "check" | "video" | "publish" | null;
+  /** 当前主视图（体检/视频/发布整页工坊；写作态无导航项——书架点书即进写作） */
+  activeView: "check" | "video" | "publish" | null;
   /** 设置页是否打开 */
   settingsActive?: boolean;
   /** 风格库页是否打开 */
@@ -14,8 +14,6 @@ interface AppRailProps {
   /** 有进行中/排队任务（显示蓝点） */
   tasksRunning?: boolean;
   onGoShelf: () => void;
-  onGoWrite: () => void;
-  onGoCover: () => void;
   onGoCheck: () => void;
   onGoVideo: () => void;
   onGoPublish: () => void;
@@ -45,32 +43,7 @@ export function AppRail(props: AppRailProps) {
         }
       />
       <RailItem
-        label="写作"
-        disabled={!book}
-        active={!props.onShelf && props.activeView === "write"}
-        onClick={props.onGoWrite}
-        icon={
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-          </svg>
-        }
-      />
-      <RailItem
-        label="封面"
-        disabled={!book}
-        active={!props.onShelf && props.activeView === "cover"}
-        onClick={props.onGoCover}
-        icon={
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-        }
-      />
-      <RailItem
         label="体检"
-        disabled={!book}
         active={!props.onShelf && props.activeView === "check"}
         onClick={props.onGoCheck}
         icon={
@@ -96,7 +69,6 @@ export function AppRail(props: AppRailProps) {
 
       <RailItem
         label="视频"
-        disabled={!book}
         active={!props.onShelf && props.activeView === "video"}
         onClick={props.onGoVideo}
         icon={
@@ -109,7 +81,6 @@ export function AppRail(props: AppRailProps) {
 
       <RailItem
         label="发布"
-        disabled={!book}
         active={!props.onShelf && props.activeView === "publish"}
         onClick={props.onGoPublish}
         icon={

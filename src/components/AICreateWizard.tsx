@@ -71,7 +71,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
   const chatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void api.listStyles().then(setStyles).catch(console.error);
+    void api.listStyles().then((all) => setStyles(all.filter((x) => x.kind === "text" || !x.kind))).catch(console.error);
     // 恢复上次会话（创建成功后重挂载时跳过，直接开新会话）
     if (startFresh) {
       onFreshConsumed?.();

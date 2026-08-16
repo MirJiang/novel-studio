@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import type { ChapterMeta, Video, VideoDetail, VideoShot } from "../types";
+import { IMAGE_PRESETS, VIDEO_PRESETS } from "../lib/stylePresets";
+import type { ChapterMeta, Style, Video, VideoDetail, VideoShot } from "../types";
 
 interface VideoViewProps {
   projectId: number;
@@ -25,12 +26,26 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
   const [creating, setCreating] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [mode, setMode] = useState<"image" | "video">("image"); // 静图运镜 / 图生视频
+  const [createStyle, setCreateStyle] = useState(""); // 创建时选的画风锚点词
+  const [createMotion, setCreateMotion] = useState(""); // 创建时选的运镜锚点词
 
   // 口播稿
   const [narration, setNarration] = useState("");
   const [narrationBusy, setNarrationBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const narrationTimer = useRef<number | null>(null);
+
+  // 全片统一画风（生成期注入每个镜头，防跨镜风格漂移）+ 运镜风格
+  const [style, setStyle] = useState("");
+  const [motion, setMotion] = useState("");
+  const [styleOptions, setStyleOptions] = useState<Style[]>([]);
+
+  useEffect(() => {
+    void api
+      .listStyles()
+      .then(setStyleOptions)
+      .catch(() => {});
+  }, []);
 
   // 分镜 / 流水线
   const [storyboardBusy, setStoryboardBusy] = useState(false);
@@ -62,8 +77,29 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
     const d = await api.getVideoDetail(videoId);
     setDetail(d);
     setNarration(d.video.narration);
+    setStyle(d.video.style);
+    setMotion(d.video.motion_style);
     setSelectedShot(null);
   }, []);
+
+  /** 保存统一画风/运镜风格（失焦即存） */
+  const saveStyle = async (styleValue: string, motionValue: string) => {
+    if (!detail) return;
+    if (
+      styleValue === detail.video.style &&
+      motionValue === detail.video.motion_style
+    )
+      return;
+    await api.setVideoStyle(detail.video.id, styleValue, motionValue);
+    setDetail((d) =>
+      d
+        ? {
+            ...d,
+            video: { ...d.video, style: styleValue, motion_style: motionValue },
+          }
+        : d,
+    );
+  };
 
   // 镜头缩略图：有图的镜头转成 data URL
   useEffect(() => {
@@ -72,12 +108,9 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
     void (async () => {
       const next: Record<number, string> = {};
       for (const s of detail.shots) {
+        // asset 协议直读磁盘（镜头图路径带时间戳，重绘即新路径）
         if (s.image_path && !thumbUrls[s.id]) {
-          try {
-            next[s.id] = await api.getCoverData(s.image_path);
-          } catch {
-            /* 图被删了就留空 */
-          }
+          next[s.id] = api.fileUrl(s.image_path);
         }
       }
       if (!cancelled && Object.keys(next).length > 0) {
@@ -99,13 +132,29 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
       projectId,
       title,
       [...picked].sort((a, b) => a - b),
-      mode
+      mode,
+      createStyle,
+      mode === "video" ? createMotion : ""
     );
     setCreating(false);
     setPicked(new Set());
     await refreshVideos();
     await loadDetail(v.id);
   };
+
+  /** 画风/运镜的可选项 = 内置预设 + 我的风格卡 */
+  const imageOptions = [
+    ...IMAGE_PRESETS.map((p) => ({ key: `p:${p.name}`, name: p.name, guide: p.guide })),
+    ...styleOptions
+      .filter((s) => s.kind === "image")
+      .map((s) => ({ key: `u:${s.id}`, name: s.name, guide: s.guide })),
+  ];
+  const videoOptions = [
+    ...VIDEO_PRESETS.map((p) => ({ key: `p:${p.name}`, name: p.name, guide: p.guide })),
+    ...styleOptions
+      .filter((s) => s.kind === "video")
+      .map((s) => ({ key: `u:${s.id}`, name: s.name, guide: s.guide })),
+  ];
 
   /** 镜头视频入队（任务队列执行，进度看任务面板/右下角浮条） */
   const enqueueShotVideos = async () => {
@@ -259,8 +308,7 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
     setError(null);
     try {
       const path = await api.generateShotImage(shot.id);
-      const url = await api.getCoverData(path);
-      setThumbUrls((prev) => ({ ...prev, [shot.id]: url }));
+      setThumbUrls((prev) => ({ ...prev, [shot.id]: api.fileUrl(path) }));
       if (detail) await loadDetail(detail.video.id);
     } catch (e) {
       setError(String(e));
@@ -337,6 +385,32 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
                 </button>
               ))}
             </div>
+            <select
+              className="mt-2 w-full rounded-[10px] bg-canvas px-3 py-2 text-[12px] text-body outline-none focus:bg-surface2"
+              value={createStyle}
+              onChange={(e) => setCreateStyle(e.target.value)}
+            >
+              <option value="">画风：默认（精美动漫插画）</option>
+              {imageOptions.map((o) => (
+                <option key={o.key} value={o.guide}>
+                  画风：{o.name}
+                </option>
+              ))}
+            </select>
+            {mode === "video" && (
+              <select
+                className="mt-2 w-full rounded-[10px] bg-canvas px-3 py-2 text-[12px] text-body outline-none focus:bg-surface2"
+                value={createMotion}
+                onChange={(e) => setCreateMotion(e.target.value)}
+              >
+                <option value="">运镜：默认（镜头缓慢轻微）</option>
+                {videoOptions.map((o) => (
+                  <option key={o.key} value={o.guide}>
+                    运镜：{o.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               disabled={picked.size === 0}
               className="mt-2.5 w-full rounded-full bg-accent py-1.5 text-xs font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
@@ -376,6 +450,59 @@ export function VideoView({ projectId, chapters }: VideoViewProps) {
 
         {detail && (
           <>
+            {/* 全片统一画风 + 运镜风格：生成期注入每个镜头的生图/运动 prompt */}
+            <div className="mb-3 rounded-2xl bg-surface p-3.5 shadow-card">
+              <span className="mb-1.5 block text-xs font-medium text-muted">
+                统一画风（防跨镜风格漂移，留空用默认「精美动漫插画」）
+              </span>
+              <input
+                className="w-full rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+                placeholder="如：古风玄幻插画 / 日系赛璐璐 / 韩系厚涂，失焦自动保存"
+                value={style}
+                onChange={(e) => setStyle(e.target.value)}
+                onBlur={() => void saveStyle(style, motion)}
+              />
+              <select
+                className="mt-1.5 w-full rounded-[10px] bg-canvas px-3 py-1.5 text-[12px] text-muted outline-none focus:bg-surface2"
+                value=""
+                onChange={(e) => {
+                  const o = imageOptions.find((x) => x.guide === e.target.value);
+                  if (!o) return;
+                  setStyle(o.guide);
+                  void saveStyle(o.guide, motion);
+                }}
+              >
+                <option value="">从风格库选画风（内置 + 我的）…</option>
+                {imageOptions.map((o) => (
+                  <option key={o.key} value={o.guide}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+              {detail.video.mode === "video" && (
+                <>
+                  <span className="mt-3 mb-1.5 block text-xs font-medium text-muted">
+                    运镜风格（注入图生视频运动提示词，留空用默认收敛词）
+                  </span>
+                  <select
+                    className="w-full rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none focus:bg-surface2"
+                    value={motion}
+                    onChange={(e) => {
+                      setMotion(e.target.value);
+                      void saveStyle(style, e.target.value);
+                    }}
+                  >
+                    <option value="">默认（镜头缓慢轻微）</option>
+                    {videoOptions.map((o) => (
+                      <option key={o.key} value={o.guide}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </div>
+
             {/* 第一步：口播稿 */}
             <Section title="① 口播稿" action={
               <button

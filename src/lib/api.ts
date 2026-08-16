@@ -154,6 +154,10 @@ export const api = {
 
   deleteLoreEntry: (id: number) => invoke<void>("delete_lore_entry", { id }),
 
+  /** AI 从全书摘要链搜集人物/地点/物品等设定词条入库，返回结果说明 */
+  collectLoreEntries: (projectId: number) =>
+    invoke<string>("collect_lore_entries", { projectId }),
+
   /** 人物卡视觉参考图，返回存储路径 */
   setLoreRefImage: (entryId: number, srcPath: string) =>
     invoke<string>("set_lore_ref_image", { entryId, srcPath }),
@@ -161,18 +165,24 @@ export const api = {
   removeLoreRefImage: (entryId: number) =>
     invoke<void>("remove_lore_ref_image", { entryId }),
 
-  /** 生成封面：AI 底图 + 程序排版书名，返回路径和预览 */
+  /** AI 生成设定图（人物=正/侧/背三视图），存为参考图，返回存储路径；style 为可选画风锚点词 */
+  generateLoreRefImage: (entryId: number, style?: string) =>
+    invoke<string>("generate_lore_ref_image", { entryId, style: style ?? null }),
+
+  /** 生成封面：AI 底图 + 程序排版书名，返回路径和预览；style 为可选画风锚点词 */
   generateCover: (
     projectId: number,
     prompt: string,
     title: string,
-    author: string
+    author: string,
+    style?: string
   ) =>
     invoke<CoverResult>("generate_cover", {
       projectId,
       prompt,
       title,
       author,
+      style: style ?? null,
     }),
 
   /** 封面历史（文件路径，新→旧） */
@@ -294,13 +304,17 @@ export const api = {
     projectId: number,
     title: string,
     chapterIds: number[],
-    mode?: "image" | "video"
+    mode?: "image" | "video",
+    style?: string,
+    motionStyle?: string
   ) =>
     invoke<Video>("create_video", {
       projectId,
       title,
       chapterIds,
       mode: mode ?? null,
+      style: style ?? null,
+      motionStyle: motionStyle ?? null,
     }),
 
   listVideos: (projectId: number) =>
@@ -313,6 +327,10 @@ export const api = {
 
   saveNarration: (videoId: number, narration: string) =>
     invoke<void>("save_narration", { videoId, narration }),
+
+  /** 全片统一画风 + 运镜风格（生成期注入每个镜头的生图/运动 prompt） */
+  setVideoStyle: (videoId: number, style: string, motionStyle: string) =>
+    invoke<void>("set_video_style", { videoId, style, motionStyle }),
 
   updateShotPrompt: (shotId: number, prompt: string) =>
     invoke<void>("update_shot_prompt", { shotId, prompt }),
@@ -398,17 +416,19 @@ export const api = {
   generateStyleCard: (
     guidance: string,
     previousGuide?: string,
-    tweak?: string
+    tweak?: string,
+    kind?: "text" | "image" | "video"
   ) =>
     invoke<string>("generate_style_card", {
       guidance,
-      previousGuide: previousGuide ?? null,
-      tweak: tweak ?? null,
+      previousGuide,
+      tweak,
+      kind,
     }),
 
   /** 保存对话生成的风格卡 */
-  saveStyleCard: (name: string, source: string, guide: string) =>
-    invoke<Style>("save_style_card", { name, source, guide }),
+  saveStyleCard: (name: string, source: string, guide: string, kind?: string) =>
+    invoke<Style>("save_style_card", { name, source, guide, kind }),
 
   // ---------- 发布（番茄作家后台，fill-only） ----------
 

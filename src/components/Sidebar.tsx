@@ -15,6 +15,8 @@ interface SidebarProps {
   onCreateLore: () => void;
   onDeleteLore: (id: number) => void;
   onSelectOutline: () => void;
+  /** 打开封面工坊（整页视图，侧栏隐藏） */
+  onSelectCover: () => void;
 }
 
 type Tab = "chapters" | "lore" | "outline";
@@ -84,6 +86,19 @@ export function Sidebar(props: SidebarProps) {
             <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.4" />
           </svg>
           {tab === "chapters" ? "新章节" : tab === "lore" ? "新词条" : "管理大纲"}
+        </button>
+
+        {/* 封面工坊入口（封面已从全局导航并入写作/书籍详情） */}
+        <button
+          className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-[10px] bg-card/60 py-1.5 text-xs text-muted shadow-card transition-colors hover:bg-surface hover:text-body"
+          onClick={props.onSelectCover}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" />
+          </svg>
+          封面工坊
         </button>
       </div>
     </aside>

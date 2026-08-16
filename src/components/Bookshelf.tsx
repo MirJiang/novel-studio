@@ -5,6 +5,8 @@ import type { Project, Style } from "../types";
 interface BookshelfProps {
   projects: Project[];
   onOpen: (id: number) => void;
+  /** 打开书籍详情（概览/设定/封面） */
+  onDetail: (id: number) => void;
   onCreate: (
     name: string,
     targetTotalWords?: number,
@@ -62,6 +64,7 @@ export function Bookshelf(props: BookshelfProps) {
                 project={p}
                 gradient={TILE_GRADIENTS[i % TILE_GRADIENTS.length]}
                 onOpen={props.onOpen}
+                onDetail={props.onDetail}
                 onRename={props.onRename}
                 onDelete={props.onDelete}
               />
@@ -77,12 +80,14 @@ function BookCard({
   project,
   gradient,
   onOpen,
+  onDetail,
   onRename,
   onDelete,
 }: {
   project: Project;
   gradient: string;
   onOpen: (id: number) => void;
+  onDetail: (id: number) => void;
   onRename: (id: number, name: string) => void;
   onDelete: (id: number) => void;
 }) {
@@ -99,9 +104,9 @@ function BookCard({
     void (async () => {
       try {
         const covers = await api.listCovers(project.id);
-        if (covers.length > 0) {
-          const url = await api.getCoverData(covers[0]); // list_covers 按时间倒序
-          if (!cancelled) setCoverUrl(url);
+        if (covers.length > 0 && !cancelled) {
+          // asset 协议直读磁盘文件，WebView 自带缓存（list_covers 按时间倒序）
+          setCoverUrl(api.fileUrl(covers[0]));
         }
       } catch {
         /* 无封面目录时走渐变色块 */
@@ -201,6 +206,22 @@ function BookCard({
         </div>
       </button>
 
+      {/* 常驻操作行：写作是主路径（点封面同效），详情次路径——不靠 ⋯ 菜单藏入口 */}
+      <div className="mt-1.5 flex gap-1.5 px-1 pb-0.5">
+        <button
+          className="flex-1 rounded-full bg-accent py-1.5 text-[11px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
+          onClick={() => onOpen(project.id)}
+        >
+          {stats != null && stats.chapters === 0 ? "开始写作" : "继续写作"}
+        </button>
+        <button
+          className="flex-1 rounded-full bg-card/70 py-1.5 text-[11px] text-body shadow-card transition-colors hover:bg-surface"
+          onClick={() => onDetail(project.id)}
+        >
+          详情
+        </button>
+      </div>
+
       {/* ⋯ 菜单（悬停显现） */}
       <div className="absolute top-5 right-5 z-10">
         <button
@@ -260,7 +281,8 @@ function NewBookButton({
 
   // 打开卡片时拉风格库（全局资源，通常没几个，随开随拉保证最新）
   useEffect(() => {
-    if (open) void api.listStyles().then(setStyles).catch(console.error);
+    if (open)
+      void api.listStyles().then((all) => setStyles(all.filter((s) => s.kind === "text" || !s.kind))).catch(console.error);
   }, [open]);
 
   const submit = () => {

@@ -2,13 +2,13 @@ import { api } from "../lib/api";
 import appIcon from "../assets/app-icon.png";
 
 /**
- * 无边框窗口的自制标题栏：左侧品牌 + 面包屑，右侧窗口控制。
+ * 无边框窗口的自制标题栏：左侧品牌，右侧窗口控制。
  * 中间区域可拖拽（data-tauri-drag-region），双击切换最大化。
  */
-export function Caption({ crumb }: { crumb?: string }) {
+export function Caption() {
   return (
     <div className="flex h-11 shrink-0 items-center select-none">
-      {/* 拖拽区（含品牌与面包屑） */}
+      {/* 拖拽区（含品牌） */}
       <div
         data-tauri-drag-region
         className="flex h-full min-w-0 flex-1 items-center pl-4"
@@ -28,14 +28,6 @@ export function Caption({ crumb }: { crumb?: string }) {
             Novel Studio
           </span>
         </div>
-        {crumb && (
-          <span
-            data-tauri-drag-region
-            className="ml-4 truncate text-xs text-muted"
-          >
-            {crumb}
-          </span>
-        )}
       </div>
 
       {/* 窗口控制（不参与拖拽） */}

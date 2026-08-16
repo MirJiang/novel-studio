@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { IMAGE_PRESETS, VIDEO_PRESETS } from "../lib/stylePresets";
 import type { Style } from "../types";
 
 interface StylesViewProps {
@@ -21,6 +22,8 @@ export function StylesView({
 }: StylesViewProps) {
   const [styles, setStyles] = useState<Style[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** 页签：写作风格（蒸馏/对话生成）/ 图片画风 / 视频运镜 */
+  const [tab, setTab] = useState<"text" | "image" | "video">("text");
 
   const [name, setName] = useState("");
   const [text, setText] = useState("");
@@ -33,6 +36,8 @@ export function StylesView({
   const [tweak, setTweak] = useState("");
   const [cardBusy, setCardBusy] = useState(false);
   const [cardName, setCardName] = useState("");
+  const [genOpen, setGenOpen] = useState(false); // 对话生成弹层
+  const [distillOpen, setDistillOpen] = useState(false); // 上传蒸馏弹层
 
   const refresh = useCallback(async () => {
     try {
@@ -63,6 +68,7 @@ export function StylesView({
       await api.distillStyle(name.trim(), "本地文本", text);
       setText("");
       setName("");
+      setDistillOpen(false);
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -71,7 +77,7 @@ export function StylesView({
     }
   };
 
-  /** 对话生成：描述出卡 / 带微调出卡 */
+  /** 对话生成：描述出卡 / 带微调出卡（kind 跟随当前页签） */
   const genCard = async (isTweak: boolean) => {
     if (cardBusy) return;
     if (isTweak && (!cardPreview || !tweak.trim())) return;
@@ -82,7 +88,8 @@ export function StylesView({
       const card = await api.generateStyleCard(
         idea.trim(),
         isTweak ? cardPreview ?? undefined : undefined,
-        isTweak ? tweak.trim() : undefined
+        isTweak ? tweak.trim() : undefined,
+        tab
       );
       setCardPreview(card);
       setTweak("");
@@ -100,11 +107,13 @@ export function StylesView({
       await api.saveStyleCard(
         cardName.trim(),
         idea.trim() ? `对话生成：${idea.trim().slice(0, 30)}` : "对话生成",
-        cardPreview
+        cardPreview,
+        tab
       );
       setCardPreview(null);
       setIdea("");
       setCardName("");
+      setGenOpen(false);
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -121,6 +130,17 @@ export function StylesView({
     }
   };
 
+  const tabStyles = styles.filter((s) =>
+    tab === "text" ? s.kind === "text" || !s.kind : s.kind === tab,
+  );
+  const presets = tab === "image" ? IMAGE_PRESETS : VIDEO_PRESETS;
+  const ideaPlaceholder =
+    tab === "text"
+      ? "描述想要的风格，如：古龙风、番茄重生年代文的爽感"
+      : tab === "image"
+        ? "描述想要的画风，如：吉卜力水彩感、暗黑油画"
+        : "描述想要的运镜，如：希区柯克变焦、环绕上升";
+
   const removeStyle = async (id: number) => {
     if (!window.confirm("确定删除这个风格吗？引用它的作品会恢复为不指定风格。"))
       return;
@@ -131,25 +151,162 @@ export function StylesView({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl px-10 pt-10 pb-16">
+      <div className="mx-auto max-w-6xl px-10 pt-10 pb-16">
         <div className="flex items-center gap-3.5">
           <h1 className="text-[26px] font-bold tracking-tight text-ink">
             风格库
           </h1>
           <span className="text-xs text-muted">{styles.length} 个风格</span>
+          <div className="ml-auto flex gap-1 rounded-[10px] bg-track p-[3px]">
+            {(
+              [
+                ["text", "小说写作"],
+                ["image", "图片画风"],
+                ["video", "视频运镜"],
+              ] as const
+            ).map(([t, label]) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`rounded-md px-4 py-1 text-xs font-medium transition-colors ${
+                  tab === t
+                    ? "bg-surface text-ink shadow-card"
+                    : "text-muted hover:text-body"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-        <p className="mt-1.5 text-xs leading-5 text-muted">
-          上传参考小说，蒸馏出写作风格；创建作品时选用，AI
-          写正文时会模仿该风格。样本仅在本地分析，建议使用公版或免费授权作品。
-        </p>
+        {/* 创建入口（弹层，避免长卡片占列表位） */}
+        <div className="mt-5 flex gap-2">
+          <button
+            className="flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
+            onClick={() => setGenOpen(true)}
+          >
+            <svg viewBox="0 0 12 12" className="h-3 w-3">
+              <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
+            对话生成风格
+          </button>
+          {tab === "text" && (
+            <button
+              className="flex items-center gap-1.5 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+              onClick={() => setDistillOpen(true)}
+            >
+              上传小说蒸馏
+            </button>
+          )}
+        </div>
 
-        {/* 对话生成风格 */}
-        <div className="mt-6 rounded-2xl bg-surface p-5 shadow-card">
-          <p className="text-[13px] font-semibold text-ink">对话生成</p>
+        {/* 图片/视频页签：内置预设（直接可用，无需添加） */}
+        {tab !== "text" && (
+          <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-3">
+            {presets.map((p) => (
+              <div
+                key={p.name}
+                className="rounded-2xl bg-surface p-4 shadow-card"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px] font-bold text-ink">
+                    {p.name}
+                  </span>
+                  <span className="ml-auto rounded-full bg-track px-2 py-0.5 text-[10px] text-muted">
+                    内置
+                  </span>
+                </div>
+                <p className="mt-1.5 text-[12px] leading-5 text-body">
+                  {p.guide}
+                </p>
+                <p className="mt-1 text-[11px] text-faint">{p.desc}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 风格卡列表（按页签过滤，小卡片网格） */}
+        <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-3">
+          {tabStyles.map((s) => (
+            <div key={s.id} className="flex flex-col rounded-2xl bg-surface p-4 shadow-card">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-[14px] font-bold text-ink">{s.name}</span>
+                {s.source === "内置" && (
+                  <span className="rounded-full bg-track px-2 py-0.5 text-[10px] text-muted">
+                    内置
+                  </span>
+                )}
+                {s.sample_chars > 0 && (
+                  <span className="text-[11px] text-faint">
+                    样本 {s.sample_chars.toLocaleString()} 字
+                  </span>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  {tab === "text" &&
+                    currentProjectId != null &&
+                    (currentProjectStyleId === s.id ? (
+                      <span className="rounded-full bg-pgreen px-2.5 py-1 text-[11px] text-pgreen-t">
+                        当前作品使用中
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => void applyToCurrent(s.id)}
+                        className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                      >
+                        应用
+                      </button>
+                    ))}
+                  <button
+                    title="删除风格"
+                    onClick={() => void removeStyle(s.id)}
+                    className="text-faint hover:text-pred-t"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <p className="mt-1.5 line-clamp-3 flex-1 text-[12px] leading-5 text-body">
+                {s.guide}
+              </p>
+              {s.example && (
+                <p className="mt-1.5 line-clamp-1 rounded-lg bg-canvas px-2.5 py-1.5 text-[11px] leading-4 text-faint">
+                  示例：{s.example}
+                </p>
+              )}
+            </div>
+          ))}
+          {tabStyles.length === 0 && (
+            <p className="col-span-full py-10 text-center text-[13px] text-faint">
+              {tab === "text"
+                ? "还没有风格，导入一本参考小说蒸馏一个"
+                : "内置预设可直接用；对话生成的自定义风格会列在这里"}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 对话生成弹层 */}
+      {genOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={() => setGenOpen(false)}
+        >
+          <div className="mx-4" onClick={(e) => e.stopPropagation()}>
+        {/* 对话生成风格（三类页签共用，kind 跟随页签） */}
+        <div className="w-full max-w-lg rounded-2xl bg-surface p-5 shadow-float">
+          <div className="flex items-center">
+            <p className="text-[13px] font-semibold text-ink">对话生成风格</p>
+            <button
+              className="ml-auto text-faint hover:text-body"
+              onClick={() => setGenOpen(false)}
+            >
+              ×
+            </button>
+          </div>
           <div className="mt-2 flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
-              placeholder="描述想要的风格，如：古龙风、番茄重生年代文的爽感"
+              placeholder={ideaPlaceholder}
               value={idea}
               onChange={(e) => setIdea(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void genCard(false)}
@@ -203,9 +360,28 @@ export function StylesView({
           )}
         </div>
 
-        {/* 创建风格卡片（上传文本蒸馏） */}
-        <div className="mt-4 rounded-2xl bg-surface p-5 shadow-card">
-          <p className="mb-2 text-[13px] font-semibold text-ink">上传小说蒸馏</p>
+          </div>
+        </div>
+      )}
+
+      {/* 上传蒸馏弹层 */}
+      {distillOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={() => setDistillOpen(false)}
+        >
+          <div className="mx-4 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        {/* 创建风格卡片（上传文本蒸馏，仅写作页签） */}
+        <div className="w-full max-w-lg rounded-2xl bg-surface p-5 shadow-float">
+          <div className="mb-2 flex items-center">
+            <p className="text-[13px] font-semibold text-ink">上传小说蒸馏</p>
+            <button
+              className="ml-auto text-faint hover:text-body"
+              onClick={() => setDistillOpen(false)}
+            >
+              ×
+            </button>
+          </div>
           <div className="flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
@@ -257,55 +433,9 @@ export function StylesView({
           )}
         </div>
 
-        {/* 风格卡列表 */}
-        <div className="mt-6 flex flex-col gap-3">
-          {styles.map((s) => (
-            <div key={s.id} className="rounded-2xl bg-surface p-5 shadow-card">
-              <div className="flex items-center gap-2.5">
-                <span className="text-[15px] font-bold text-ink">{s.name}</span>
-                <span className="text-[11px] text-faint">
-                  样本 {s.sample_chars.toLocaleString()} 字
-                </span>
-                <div className="ml-auto flex items-center gap-2">
-                  {currentProjectId != null &&
-                    (currentProjectStyleId === s.id ? (
-                      <span className="rounded-full bg-pgreen px-2.5 py-1 text-[11px] text-pgreen-t">
-                        当前作品使用中
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => void applyToCurrent(s.id)}
-                        className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
-                      >
-                        应用到当前作品
-                      </button>
-                    ))}
-                  <button
-                    title="删除风格"
-                    onClick={() => void removeStyle(s.id)}
-                    className="text-faint hover:text-pred-t"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              <p className="mt-2.5 whitespace-pre-wrap text-[13px] leading-6 text-body">
-                {s.guide}
-              </p>
-              {s.example && (
-                <p className="mt-2 line-clamp-2 rounded-lg bg-canvas px-3 py-2 text-[11px] leading-4 text-faint">
-                  示例：{s.example}
-                </p>
-              )}
-            </div>
-          ))}
-          {styles.length === 0 && (
-            <p className="py-10 text-center text-[13px] text-faint">
-              还没有风格，导入一本参考小说蒸馏一个
-            </p>
-          )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

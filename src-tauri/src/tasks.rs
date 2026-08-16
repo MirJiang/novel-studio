@@ -61,9 +61,7 @@ pub fn spawn_worker(app: AppHandle, db: Db) {
                         Ok(TaskEnd::Cancelled(msg)) => {
                             db.finish_task(task.id, "cancelled", &msg, "")
                         }
-                        Ok(TaskEnd::Paused(msg)) => {
-                            db.finish_task(task.id, "paused", &msg, "")
-                        }
+                        Ok(TaskEnd::Paused(msg)) => db.finish_task(task.id, "paused", &msg, ""),
                         Err(e) => db.finish_task(task.id, "error", "", &e),
                     };
                     if let Err(e) = r {
@@ -137,9 +135,15 @@ pub fn enqueue_batch_chapters(
     };
     let wan = format!("{:.1}", total_words as f64 / 10000.0);
     let label = if chapter_count <= 0 {
-        format!("《{}》写完整本书（约 {count} 章 · {wan} 万字 · {duration}）", project.name)
+        format!(
+            "《{}》写完整本书（约 {count} 章 · {wan} 万字 · {duration}）",
+            project.name
+        )
     } else {
-        format!("《{}》批量写章 ×{count}（约 {wan} 万字 · {duration}）", project.name)
+        format!(
+            "《{}》批量写章 ×{count}（约 {wan} 万字 · {duration}）",
+            project.name
+        )
     };
     let payload = serde_json::json!({
         "chapter_count": chapter_count,

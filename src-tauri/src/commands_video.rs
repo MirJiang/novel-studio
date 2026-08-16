@@ -12,9 +12,9 @@ use crate::llm::{self, StreamEvent};
 use crate::tasks::TaskEnd;
 use crate::video::{self, ComposeShot, TtsConfig};
 use crate::video_gen::{self, VideoGenConfig};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use base64::Engine;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
@@ -66,6 +66,8 @@ pub fn create_video(
     title: String,
     chapter_ids: Vec<i64>,
     mode: Option<String>,
+    style: Option<String>,
+    motion_style: Option<String>,
 ) -> Result<Video, String> {
     if chapter_ids.is_empty() {
         return Err("请先选择取材章节".to_string());
@@ -79,8 +81,15 @@ pub fn create_video(
         .map(|i| i.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    db.create_video(project_id, &title, &ids, &mode)
-        .map_err(|e| e.to_string())
+    db.create_video(
+        project_id,
+        &title,
+        &ids,
+        &mode,
+        style.as_deref().unwrap_or(""),
+        motion_style.as_deref().unwrap_or(""),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -117,19 +126,28 @@ pub fn save_narration(db: State<'_, Db>, video_id: i64, narration: String) -> Re
         .map_err(|e| e.to_string())
 }
 
+/// 设置全片统一画风 + 运镜风格（生成期注入每个镜头的生图/运动 prompt，v13/v14）
 #[tauri::command]
-pub fn update_shot_prompt(
+pub fn set_video_style(
     db: State<'_, Db>,
-    shot_id: i64,
-    prompt: String,
+    video_id: i64,
+    style: String,
+    motion_style: String,
 ) -> Result<(), String> {
+    db.set_video_style(video_id, &style, &motion_style)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_shot_prompt(db: State<'_, Db>, shot_id: i64, prompt: String) -> Result<(), String> {
     db.update_shot_prompt(shot_id, &prompt)
         .map_err(|e| e.to_string())
 }
 
 // ---------- 第一步：口播稿（流式，设定注入） ----------
 
-const NARRATION_SYSTEM: &str = "你是短视频小说推文编导，擅长把小说章节改写成 60~90 秒的口播推文稿。\
+const NARRATION_SYSTEM: &str =
+    "你是短视频小说推文编导，擅长把小说章节改写成 60~90 秒的口播推文稿。\
 要求：开场 3 秒必须有钩子（悬念/冲突/反转）；口语化、短句为主；结尾留悬念引导关注；\
 严格遵守给定的人物与世界观设定，不编造设定外的情节。\
 直接输出口播稿正文，不要分镜标注、不要解释。";
@@ -151,10 +169,7 @@ pub async fn generate_narration(
         let total = plain.chars().count();
         let excerpt = if total > 4000 {
             let head: String = plain.chars().take(2500).collect();
-            let tail: String = plain
-                .chars()
-                .skip(total - 1500)
-                .collect();
+            let tail: String = plain.chars().skip(total - 1500).collect();
             format!("{head}\n……（中段略）……\n{tail}")
         } else {
             plain
@@ -166,9 +181,7 @@ pub async fn generate_narration(
     }
 
     // 设定注入（红线：任何 AI 输出都过设定库）
-    let entries = db
-        .list_lore_entries(video.project_id)
-        .unwrap_or_default();
+    let entries = db.list_lore_entries(video.project_id).unwrap_or_default();
     let (lore_section, injected) = build_lore_section(&entries, &source);
     let _ = channel.send(StreamEvent::Meta {
         note: if injected.is_empty() {
@@ -213,24 +226,54 @@ const STORYBOARD_SYSTEM: &str = "你是短视频分镜师。把口播稿切成 8
 为每镜写画面提示词（用于 AI 生图）：\
 1）画面描述具体（人物动作、表情、环境、光线、镜头感）；\
 2）出场的每个角色必须带上设定资料里的外貌关键词，保证跨镜一致；\
-3）结尾统一加风格后缀「古风玄幻插画，电影感打光，竖版构图，无文字」；\
+3）不要写画风/色调/风格类词语（如“古风”“赛璐璐”“电影感”），全片风格由系统统一注入；\
 4）画面中绝不出现文字。\
 只输出 JSON 数组，格式：[{\"text\": \"口播句\", \"prompt\": \"画面提示词\"}…]，不要输出其他内容。";
 
+/// 画风缺省后缀：视频未设置统一画风时用（video.style 为空）
+const DEFAULT_SHOT_STYLE: &str = "精美动漫插画，电影感打光";
+
+/// 运动收敛 + 一致性约束：调研结论（docs/research-video-2026-08.md）——
+/// 运动幅度过大是崩坏主因，长镜尾段风格衰减；prompt 里显式压住
+const MOTION_GUARD: &str =
+    "镜头运动缓慢轻微，人物长相、服装与画面风格始终与首帧保持一致，不变形、不换脸、不串色";
+
+/// 命中本镜的角色参考图路径（常驻/关键词/标题命中且配有参考图，≤3 张——参考图过多反而漂移）
+fn matched_lore_ref_paths(db: &Db, project_id: i64, context: &str) -> Vec<String> {
+    let entries = db.list_lore_entries(project_id).unwrap_or_default();
+    let mut refs: Vec<String> = Vec::new();
+    for e in entries
+        .iter()
+        .filter(|e| e.enabled && !e.ref_image.is_empty())
+    {
+        let keyword_hit = e
+            .keywords
+            .split([',', '，'])
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+            .any(|k| context.contains(k));
+        if !(e.always_include || keyword_hit || context.contains(&e.title)) {
+            continue;
+        }
+        if std::path::Path::new(&e.ref_image).exists() {
+            refs.push(e.ref_image.clone());
+        }
+        if refs.len() >= 3 {
+            break;
+        }
+    }
+    refs
+}
+
 #[tauri::command]
-pub async fn generate_storyboard(
-    db: State<'_, Db>,
-    video_id: i64,
-) -> Result<VideoDetail, String> {
+pub async fn generate_storyboard(db: State<'_, Db>, video_id: i64) -> Result<VideoDetail, String> {
     let video = db.get_video(video_id).map_err(|e| e.to_string())?;
     if video.narration.trim().is_empty() {
         return Err("请先生成（或填写）口播稿".to_string());
     }
 
     // 人物设定注入，让提示词带上角色外貌
-    let entries = db
-        .list_lore_entries(video.project_id)
-        .unwrap_or_default();
+    let entries = db.list_lore_entries(video.project_id).unwrap_or_default();
     let (lore_section, _) = build_lore_section(&entries, &video.narration);
     let lore_block = if lore_section.is_empty() {
         String::new()
@@ -255,8 +298,8 @@ pub async fn generate_storyboard(
     // 宽容解析：截取首个 [ 到末个 ]
     let start = raw.find('[').ok_or("分镜结果不是 JSON 数组")?;
     let end = raw.rfind(']').ok_or("分镜结果不是 JSON 数组")?;
-    let drafts: Vec<ShotDraft> = serde_json::from_str(&raw[start..=end])
-        .map_err(|e| format!("分镜 JSON 解析失败: {e}"))?;
+    let drafts: Vec<ShotDraft> =
+        serde_json::from_str(&raw[start..=end]).map_err(|e| format!("分镜 JSON 解析失败: {e}"))?;
     let pairs: Vec<(String, String)> = drafts
         .into_iter()
         .map(|d| (d.text.trim().to_string(), d.prompt.trim().to_string()))
@@ -277,37 +320,29 @@ async fn gen_one_image(app: &AppHandle, db: &Db, shot: &VideoShot) -> Result<Str
     let video = db.get_video(shot.video_id).map_err(|e| e.to_string())?;
     let cfg = load_image_config(db);
 
-    // 角色一致性：命中词条（常驻/关键词/标题命中本镜文本）且配有参考图时，随生图请求带上
-    let entries = db
-        .list_lore_entries(video.project_id)
-        .unwrap_or_default();
+    // 角色一致性：命中词条的参考图随生图请求带上（≤3 张）
     let context = format!("{}\n{}", shot.text, shot.prompt);
-    let mut refs: Vec<String> = Vec::new();
-    for e in entries
+    let refs: Vec<String> = matched_lore_ref_paths(db, video.project_id, &context)
         .iter()
-        .filter(|e| e.enabled && !e.ref_image.is_empty())
-    {
-        let keyword_hit = e
-            .keywords
-            .split([',', '，'])
-            .map(str::trim)
-            .filter(|k| !k.is_empty())
-            .any(|k| context.contains(k));
-        if !(e.always_include || keyword_hit || context.contains(&e.title)) {
-            continue;
-        }
-        if let Ok(bytes) = std::fs::read(&e.ref_image) {
-            refs.push(format!(
-                "data:image/png;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(bytes)
-            ));
-        }
-        if refs.len() >= 3 {
-            break; // 参考图最多带 3 张，防止 prompt 过载
-        }
-    }
+        .filter_map(|p| {
+            std::fs::read(p).ok().map(|bytes| {
+                format!(
+                    "data:image/png;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                )
+            })
+        })
+        .collect();
 
-    let bytes = image_gen::generate_image(&cfg, &shot.prompt, SHOT_SIZE, &refs)
+    // 全片统一画风生成期注入（v13）：用户改 prompt 不用管风格词，风格由视频级字段控制
+    let style = if video.style.trim().is_empty() {
+        DEFAULT_SHOT_STYLE
+    } else {
+        video.style.trim()
+    };
+    let prompt = format!("{}，{style}，竖版构图，画面中无文字", shot.prompt);
+
+    let bytes = image_gen::generate_image(&cfg, &prompt, SHOT_SIZE, &refs)
         .await
         .map_err(|e| e.to_string())?;
     let ts = std::time::SystemTime::now()
@@ -385,6 +420,10 @@ fn load_video_gen_config(db: &Db) -> VideoGenConfig {
         base_url: read("img_base_url", "https://ark.cn-beijing.volces.com/api/v3"),
         api_key: read("img_api_key", ""),
         model: read("video_model", "doubao-seedance-1-0-pro-250528"),
+        duration_secs: read("video_duration", "5")
+            .parse()
+            .unwrap_or(5)
+            .clamp(3, 15),
     }
 }
 
@@ -399,10 +438,23 @@ async fn gen_one_shot_video(
     }
     let video = db.get_video(shot.video_id).map_err(|e| e.to_string())?;
     let out = videos_dir(app, &video)?.join(format!("shot-{}.mp4", shot.id));
+    // 运动收敛 + 一致性约束 + 角色参考图（Seedance 2.x reference_image，老模型自动降级）
+    let context = format!("{}\n{}", shot.text, shot.prompt);
+    let refs = matched_lore_ref_paths(db, video.project_id, &context);
+    let motion_prompt = if video.motion_style.trim().is_empty() {
+        format!("{}，{MOTION_GUARD}", shot.prompt)
+    } else {
+        format!(
+            "{}，{}，{MOTION_GUARD}",
+            shot.prompt,
+            video.motion_style.trim()
+        )
+    };
     video_gen::generate_from_first_frame(
         cfg,
-        &shot.prompt,
+        &motion_prompt,
         &std::path::PathBuf::from(&shot.image_path),
+        &refs,
         &out,
     )
     .await
@@ -434,8 +486,8 @@ pub(crate) async fn run_video_shots(
     struct Payload {
         video_id: i64,
     }
-    let payload: Payload = serde_json::from_str(&task.payload)
-        .map_err(|e| format!("任务参数解析失败: {e}"))?;
+    let payload: Payload =
+        serde_json::from_str(&task.payload).map_err(|e| format!("任务参数解析失败: {e}"))?;
 
     let video = db.get_video(payload.video_id).map_err(|e| e.to_string())?;
     let pending: Vec<VideoShot> = db

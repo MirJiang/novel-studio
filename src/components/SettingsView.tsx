@@ -7,6 +7,8 @@ interface FieldDef {
   label: string;
   placeholder: string;
   secret: boolean;
+  /** 有 options 时渲染下拉框而不是输入框 */
+  options?: { value: string; label: string }[];
 }
 
 interface SectionDef {
@@ -17,13 +19,71 @@ interface SectionDef {
   fields: FieldDef[];
 }
 
+/** 文本模型厂商预设：选中后自动填接口地址/协议/推荐模型，保存前可再改 */
+const LLM_PRESETS = [
+  { name: "自定义", base: "", protocol: "", model: "" },
+  {
+    name: "DeepSeek",
+    base: "https://api.deepseek.com/v1",
+    protocol: "openai",
+    model: "deepseek-chat",
+  },
+  {
+    name: "OpenAI",
+    base: "https://api.openai.com/v1",
+    protocol: "openai",
+    model: "gpt-4o-mini",
+  },
+  {
+    name: "Claude（Anthropic）",
+    base: "https://api.anthropic.com",
+    protocol: "anthropic",
+    model: "claude-sonnet-4-5",
+  },
+  {
+    name: "通义千问（阿里云兼容模式）",
+    base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    protocol: "openai",
+    model: "qwen-plus",
+  },
+  {
+    name: "Kimi（月之暗面）",
+    base: "https://api.moonshot.cn/v1",
+    protocol: "openai",
+    model: "kimi-k2-0711-preview",
+  },
+  {
+    name: "智谱 GLM",
+    base: "https://open.bigmodel.cn/api/paas/v4",
+    protocol: "openai",
+    model: "glm-4-plus",
+  },
+  {
+    name: "OpenRouter",
+    base: "https://openrouter.ai/api/v1",
+    protocol: "openai",
+    model: "",
+  },
+];
+
 const SECTIONS: SectionDef[] = [
   {
     id: "llm",
     label: "文本模型",
     title: "文本模型",
-    hint: "续写 / 改写 / 摘要 / 起书策划 / 视频口播稿共用。兼容 OpenAI 对话协议：DeepSeek / 通义 / Kimi / OpenAI…",
+    hint: "续写 / 改写 / 摘要 / 起书策划 / 视频口播稿共用。协议只有两套：OpenAI 兼容（DeepSeek / 通义 / Kimi / 智谱 / OpenAI / OpenRouter / one-api…）与 Claude（Anthropic），自定义中转填地址即可",
     fields: [
+      {
+        key: "llm_protocol",
+        label: "协议",
+        placeholder: "",
+        secret: false,
+        options: [
+          { value: "", label: "自动（按接口地址识别）" },
+          { value: "openai", label: "OpenAI 兼容" },
+          { value: "anthropic", label: "Claude / Anthropic" },
+        ],
+      },
       {
         key: "llm_base_url",
         label: "接口地址",
@@ -49,7 +109,7 @@ const SECTIONS: SectionDef[] = [
     id: "img",
     label: "封面生图",
     title: "封面生图 / 图生视频",
-    hint: "兼容 OpenAI Images 协议，推荐火山方舟 Seedream（即梦）。分镜配图也用这组配置；图生视频复用同一把 Key，需在方舟控制台开通 Seedance 视频模型",
+    hint: "兼容 OpenAI Images 协议，推荐火山方舟 Seedream（即梦）；也支持阿里云百炼/Token 套餐（aliyuncs.com 域名自动走原生协议，如 wan2.7-image）。分镜配图也用这组配置；图生视频复用同一把 Key，需在方舟控制台开通 Seedance 视频模型——推荐 2.x（支持多图参考锁角色，模型 ID 按控制台实际开通填）",
     fields: [
       {
         key: "img_base_url",
@@ -68,6 +128,12 @@ const SECTIONS: SectionDef[] = [
         key: "video_model",
         label: "视频模型（图生视频）",
         placeholder: "doubao-seedance-1-0-pro-250528",
+        secret: false,
+      },
+      {
+        key: "video_duration",
+        label: "镜头视频时长（秒，3~15；短镜更稳，长尾易漂移）",
+        placeholder: "5",
         secret: false,
       },
     ],
@@ -378,20 +444,66 @@ export function SettingsView() {
               <p className="mt-1 mb-4 text-xs leading-5 text-muted">
                 {active.hint}
               </p>
+              {active.id === "llm" && (
+                <label className="mb-3.5 block">
+                  <span className="mb-1.5 block text-xs font-medium text-muted">
+                    厂商预设（选中自动填下方配置，可再改）
+                  </span>
+                  <select
+                    className="w-full rounded-[10px] bg-canvas px-3 py-2 text-sm outline-none focus:bg-surface2"
+                    value=""
+                    onChange={(e) => {
+                      const p = LLM_PRESETS.find(
+                        (x) => x.name === e.target.value,
+                      );
+                      if (!p || p.name === "自定义") return;
+                      setValues((v) => ({
+                        ...v,
+                        llm_base_url: p.base,
+                        llm_protocol: p.protocol,
+                        ...(p.model ? { llm_model: p.model } : {}),
+                      }));
+                    }}
+                  >
+                    <option value="">选择厂商…</option>
+                    {LLM_PRESETS.filter((p) => p.name !== "自定义").map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {active.fields.map((f) => (
                 <label key={f.key} className="mb-3.5 block last:mb-0">
                   <span className="mb-1.5 block text-xs font-medium text-muted">
                     {f.label}
                   </span>
-                  <input
-                    type={f.secret ? "password" : "text"}
-                    className="w-full rounded-[10px] bg-canvas px-3 py-2 text-sm outline-none placeholder:text-faint focus:bg-surface2"
-                    placeholder={f.placeholder}
-                    value={values[f.key] ?? ""}
-                    onChange={(e) =>
-                      setValues((v) => ({ ...v, [f.key]: e.target.value }))
-                    }
-                  />
+                  {f.options ? (
+                    <select
+                      className="w-full rounded-[10px] bg-canvas px-3 py-2 text-sm outline-none focus:bg-surface2"
+                      value={values[f.key] ?? ""}
+                      onChange={(e) =>
+                        setValues((v) => ({ ...v, [f.key]: e.target.value }))
+                      }
+                    >
+                      {f.options.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type={f.secret ? "password" : "text"}
+                      className="w-full rounded-[10px] bg-canvas px-3 py-2 text-sm outline-none placeholder:text-faint focus:bg-surface2"
+                      placeholder={f.placeholder}
+                      value={values[f.key] ?? ""}
+                      onChange={(e) =>
+                        setValues((v) => ({ ...v, [f.key]: e.target.value }))
+                      }
+                    />
+                  )}
                 </label>
               ))}
             </section>

@@ -44,6 +44,65 @@ struct ImageData {
     b64_json: Option<String>,
 }
 
+/// 阿里云 DashScope 原生多模态生图协议（wan2.x-image / qwen-image 等）
+/// 阿里云系 host（含 token-plan 套餐域名）不支持 OpenAI 兼容 images/generations，
+/// 走 /api/v1/services/aigc/multimodal-generation/generation，尺寸分隔符用 *
+#[derive(Serialize)]
+struct DashscopeRequest<'a> {
+    model: &'a str,
+    input: DashscopeInput<'a>,
+    parameters: DashscopeParams,
+}
+
+#[derive(Serialize)]
+struct DashscopeInput<'a> {
+    messages: Vec<DashscopeMessage<'a>>,
+}
+
+#[derive(Serialize)]
+struct DashscopeMessage<'a> {
+    role: &'a str,
+    content: Vec<DashscopeContent<'a>>,
+}
+
+#[derive(Serialize)]
+struct DashscopeContent<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct DashscopeParams {
+    size: String,
+}
+
+#[derive(Deserialize)]
+struct DashscopeResponse {
+    output: DashscopeOutput,
+}
+
+#[derive(Deserialize)]
+struct DashscopeOutput {
+    choices: Vec<DashscopeChoice>,
+}
+
+#[derive(Deserialize)]
+struct DashscopeChoice {
+    message: DashscopeRespMessage,
+}
+
+#[derive(Deserialize)]
+struct DashscopeRespMessage {
+    content: Vec<DashscopeRespContent>,
+}
+
+#[derive(Deserialize)]
+struct DashscopeRespContent {
+    image: Option<String>,
+}
+
 /// 调生图接口，返回图片字节。refs 为可选参考图（data URL），用于角色一致性
 pub async fn generate_image(
     cfg: &ImageConfig,
@@ -53,6 +112,9 @@ pub async fn generate_image(
 ) -> Result<Vec<u8>> {
     if cfg.api_key.trim().is_empty() {
         return Err(anyhow!("尚未配置生图 API Key，请先在设置中填写"));
+    }
+    if cfg.base_url.contains("aliyuncs.com") {
+        return generate_image_dashscope(cfg, prompt, size, refs).await;
     }
     let url = format!("{}/images/generations", cfg.base_url.trim_end_matches('/'));
     let body = ImagesRequest {
@@ -100,6 +162,76 @@ pub async fn generate_image(
             .context("解码 base64 图片失败");
     }
     Err(anyhow!("生图接口返回格式不支持"))
+}
+
+/// 阿里云原生多模态生图（wan2.x-image）：base_url 可填 compatible-mode 地址或域名根，
+/// 统一换成原生端点；size 的 x 分隔符转成 *；参考图作为 image 内容项携带
+async fn generate_image_dashscope(
+    cfg: &ImageConfig,
+    prompt: &str,
+    size: &str,
+    refs: &[String],
+) -> Result<Vec<u8>> {
+    let base = cfg
+        .base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/compatible-mode/v1")
+        .trim_end_matches("/compatible-mode");
+    let url = format!("{base}/api/v1/services/aigc/multimodal-generation/generation");
+    let mut content: Vec<DashscopeContent> = refs
+        .iter()
+        .map(|r| DashscopeContent {
+            text: None,
+            image: Some(r),
+        })
+        .collect();
+    content.push(DashscopeContent {
+        text: Some(prompt),
+        image: None,
+    });
+    let body = DashscopeRequest {
+        model: &cfg.model,
+        input: DashscopeInput {
+            messages: vec![DashscopeMessage {
+                role: "user",
+                content,
+            }],
+        },
+        parameters: DashscopeParams {
+            size: size.replace('x', "*"),
+        },
+    };
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .bearer_auth(&cfg.api_key)
+        .json(&body)
+        .send()
+        .await
+        .context("请求生图接口失败")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let short: String = text.chars().take(300).collect();
+        return Err(anyhow!("生图接口返回 {status}: {short}"));
+    }
+    let parsed: DashscopeResponse = resp.json().await.context("解析生图响应失败")?;
+    let image_url = parsed
+        .output
+        .choices
+        .into_iter()
+        .next()
+        .and_then(|c| c.message.content.into_iter().find_map(|item| item.image))
+        .ok_or_else(|| anyhow!("生图接口没有返回图片"))?;
+    let bytes = client
+        .get(&image_url)
+        .send()
+        .await
+        .context("下载生成图失败")?
+        .bytes()
+        .await
+        .context("读取生成图失败")?;
+    Ok(bytes.to_vec())
 }
 
 /// 在底图上排版书名与作者，输出 PNG 字节
@@ -154,9 +286,7 @@ fn load_cjk_font() -> Result<FontVec> {
             }
         }
     }
-    Err(anyhow!(
-        "未找到可用中文字体（尝试过 微软雅黑/黑体/宋体）"
-    ))
+    Err(anyhow!("未找到可用中文字体（尝试过 微软雅黑/黑体/宋体）"))
 }
 
 fn text_width(font: &FontVec, scale: f32, text: &str) -> f32 {

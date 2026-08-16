@@ -75,7 +75,9 @@ pub async fn tts_synthesize(cfg: &TtsConfig, text: &str) -> Result<Vec<u8>> {
             token: &cfg.access_token,
             cluster: &cfg.cluster,
         },
-        user: TtsUser { uid: "novel-studio" },
+        user: TtsUser {
+            uid: "novel-studio",
+        },
         audio: TtsAudio {
             voice_type: &cfg.voice,
             encoding: "mp3",
@@ -97,11 +99,7 @@ pub async fn tts_synthesize(cfg: &TtsConfig, text: &str) -> Result<Vec<u8>> {
         .context("请求 TTS 接口失败")?;
     let parsed: TtsResp = resp.json().await.context("解析 TTS 响应失败")?;
     if parsed.code != 3000 {
-        return Err(anyhow!(
-            "TTS 接口返回 {}: {}",
-            parsed.code,
-            parsed.message
-        ));
+        return Err(anyhow!("TTS 接口返回 {}: {}", parsed.code, parsed.message));
     }
     let b64 = parsed.data.ok_or_else(|| anyhow!("TTS 没有返回音频"))?;
     base64::engine::general_purpose::STANDARD
@@ -143,7 +141,14 @@ fn run_tool(bin: &Path, args: &[String], cwd: &Path) -> Result<()> {
         .with_context(|| format!("执行 {} 失败", bin.display()))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let tail: String = stderr.chars().rev().take(400).collect::<String>().chars().rev().collect();
+        let tail: String = stderr
+            .chars()
+            .rev()
+            .take(400)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         return Err(anyhow!("{} 执行失败: {tail}", bin.display()));
     }
     Ok(())
@@ -199,13 +204,9 @@ fn is_image(p: &Path) -> bool {
 }
 
 /// 把片头/片尾素材标准化成统一视频段（1080x1920 30fps 无声），返回 (段文件名, 时长 ms)
-fn normalize_segment(
-    ffmpeg: &Path,
-    src: &Path,
-    seg_name: &str,
-    video_dir: &Path,
-) -> Result<i64> {
-    let vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p";
+fn normalize_segment(ffmpeg: &Path, src: &Path, seg_name: &str, video_dir: &Path) -> Result<i64> {
+    let vf =
+        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p";
     if is_image(src) {
         let secs = 2.5_f64;
         run_tool(
@@ -359,9 +360,16 @@ pub fn compose(
     run_tool(
         &ffmpeg,
         &[
-            "-f".into(), "concat".into(), "-safe".into(), "0".into(),
-            "-i".into(), "vlist.txt".into(),
-            "-c".into(), "copy".into(), "-y".into(), "video-only.mp4".into(),
+            "-f".into(),
+            "concat".into(),
+            "-safe".into(),
+            "0".into(),
+            "-i".into(),
+            "vlist.txt".into(),
+            "-c".into(),
+            "copy".into(),
+            "-y".into(),
+            "video-only.mp4".into(),
         ],
         video_dir,
     )?;
@@ -376,10 +384,18 @@ pub fn compose(
     run_tool(
         &ffmpeg,
         &[
-            "-f".into(), "concat".into(), "-safe".into(), "0".into(),
-            "-i".into(), "alist.txt".into(),
-            "-c:a".into(), "libmp3lame".into(), "-q:a".into(), "4".into(),
-            "-y".into(), "full-audio.mp3".into(),
+            "-f".into(),
+            "concat".into(),
+            "-safe".into(),
+            "0".into(),
+            "-i".into(),
+            "alist.txt".into(),
+            "-c:a".into(),
+            "libmp3lame".into(),
+            "-q:a".into(),
+            "4".into(),
+            "-y".into(),
+            "full-audio.mp3".into(),
         ],
         video_dir,
     )?;
@@ -409,9 +425,8 @@ pub fn compose(
     // 5. 合成终片：烧字幕 + 配音轨延迟到片头之后/补齐到总长 + 可选 BGM 垫底混音
     //    注意 -vf 和 -filter_complex 不能同时用于同一视频流，字幕进 filter_complex
     let vol = (extras.bgm_volume.clamp(1, 100) as f64) / 100.0;
-    let voice_chain = format!(
-        "[1:a]adelay={intro_ms}|{intro_ms},apad=whole_dur={total_secs:.3}[vo]"
-    );
+    let voice_chain =
+        format!("[1:a]adelay={intro_ms}|{intro_ms},apad=whole_dur={total_secs:.3}[vo]");
     let (filter, audio_map, extra_input): (String, &str, Vec<String>) = match &extras.bgm {
         Some(bgm) => (
             format!(

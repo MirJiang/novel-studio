@@ -93,6 +93,10 @@ pub struct Video {
     pub status: String,
     /// image = 静图运镜（默认）/ video = 图生视频（Seedance，按量计费）
     pub mode: String,
+    /// 全片统一画风（v13，如"古风玄幻插画"），空 = 用默认后缀；生成期注入每个镜头
+    pub style: String,
+    /// 运镜风格（v14，如"手持呼吸感"），空 = 只用默认收敛词；注入图生视频运动 prompt
+    pub motion_style: String,
     /// BGM 文件路径（空 = 无）
     pub bgm_path: String,
     /// BGM 音量百分比（相对配音轨），默认 15
@@ -140,6 +144,8 @@ pub struct Style {
     pub guide: String,
     /// 代表性示例片段（前端展示）
     pub example: String,
+    /// 类别（v14）：text=写作 / image=图片画风 / video=视频运镜
+    pub kind: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -273,10 +279,8 @@ impl Db {
         // 版本化迁移：v2 给章节加摘要列（新库老库统一走 ALTER）
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
-            conn.execute_batch(
-                "ALTER TABLE chapters ADD COLUMN summary TEXT NOT NULL DEFAULT '';",
-            )
-            .context("迁移 v2 失败")?;
+            conn.execute_batch("ALTER TABLE chapters ADD COLUMN summary TEXT NOT NULL DEFAULT '';")
+                .context("迁移 v2 失败")?;
         }
         // v3：体检报告存档
         if version < 3 {
@@ -449,6 +453,78 @@ impl Db {
             .context("迁移 v12 失败")?;
         }
         conn.pragma_update(None, "user_version", 12)?;
+        // v13：videos.style——全片统一画风，分镜生图/图生视频时统一注入，防跨镜风格漂移
+        if version < 13 {
+            conn.execute_batch("ALTER TABLE videos ADD COLUMN style TEXT NOT NULL DEFAULT '';")
+                .context("迁移 v13 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 13)?;
+        // v14：风格库分类（text/image/video）+ 视频运动风格
+        if version < 14 {
+            conn.execute_batch(
+                "ALTER TABLE styles ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';
+                 ALTER TABLE videos ADD COLUMN motion_style TEXT NOT NULL DEFAULT '';",
+            )
+            .context("迁移 v14 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 14)?;
+        // v15：内置写作风格（番茄爽文/古龙/知乎盐选/晋江言情），创建作品即可直选
+        if version < 15 {
+            Self::seed_builtin_styles(&conn)?;
+        }
+        conn.pragma_update(None, "user_version", 15)?;
+        Ok(())
+    }
+
+    /// v15 种子：内置写作风格卡（source=内置，与用户卡同表同权，可删）。
+    /// 关联函数拿调用方的连接句柄——migrate 已持有锁，方法式调用会死锁
+    fn seed_builtin_styles(conn: &rusqlite::Connection) -> Result<()> {
+        const BUILTIN: [(&str, &str); 4] = [
+            (
+                "番茄爽文风",
+                "【整体基调】快节奏商业爽文，情绪直给，主打解压与代入感。
+【句式与节奏】短句为主，一段一两句，叙事流速快，场景切换干脆。
+【用词偏好】口语化、网感化，用词直白，拒绝华丽辞藻。
+【叙事视角】第三人称贴主角视角，心理活动直写，信息全给读者。
+【对话风格】对话占比高，推动剧情与打脸，潜台词少。
+【钩子与爽点】每章至少一个爽点（打脸/升级/反转），章末必留钩子。",
+            ),
+            (
+                "古龙风",
+                "【整体基调】冷峻写意，江湖气与孤独感。
+【句式与节奏】极短句，频繁分行，留白多，节奏如刀。
+【用词偏好】白描为主，名词短句堆叠，不堆砌形容词。
+【叙事视角】第三人称远视角，少心理描写，靠动作与对话写人。
+【对话风格】对话带机锋，简短有哲理，潜台词重。
+【钩子与爽点】悬念与反转取胜，章末常停在一句话的惊雷上。",
+            ),
+            (
+                "知乎盐选风",
+                "【整体基调】第一人称强悬念，真实感与反差感。
+【句式与节奏】口语化叙述，段落短，节奏快，信息密度高。
+【用词偏好】生活化词汇，网感表达，适度自嘲。
+【叙事视角】第一人称「我」，贴脸视角，强代入。
+【对话风格】对话自然日常，承担反转信息的释放。
+【钩子与爽点】开头即钩子，章章有小反转，结尾留大反转。",
+            ),
+            (
+                "晋江言情风",
+                "【整体基调】细腻情感流，氛围感与暧昧张力。
+【句式与节奏】长短句错落，感官细节多，节奏舒缓。
+【用词偏好】精致书面语，意象化表达，情绪词克制。
+【叙事视角】第三人称限知（多贴女主），心理描写细腻。
+【对话风格】对话含蓄，言外之意与互相试探多。
+【钩子与爽点】情感进展即爽点，章末停在关系变化的一瞬。",
+            ),
+        ];
+        let ts = now();
+        for (name, guide) in BUILTIN {
+            conn.execute(
+                "INSERT INTO styles (name, source, sample_chars, guide, example, kind, created_at, updated_at)
+                 VALUES (?1, '内置', 0, ?2, '', 'text', ?3, ?3)",
+                params![name, guide, ts],
+            )?;
+        }
         Ok(())
     }
 
@@ -901,6 +977,32 @@ impl Db {
         Ok(())
     }
 
+    pub fn get_lore_entry(&self, id: i64) -> Result<LoreEntry> {
+        let conn = self.conn.lock().unwrap();
+        let e = conn.query_row(
+            "SELECT id, project_id, category, title, content, keywords,
+                    always_include, enabled, ref_image, created_at, updated_at
+             FROM lore_entries WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(LoreEntry {
+                    id: r.get(0)?,
+                    project_id: r.get(1)?,
+                    category: r.get(2)?,
+                    title: r.get(3)?,
+                    content: r.get(4)?,
+                    keywords: r.get(5)?,
+                    always_include: r.get(6)?,
+                    enabled: r.get(7)?,
+                    ref_image: r.get(8)?,
+                    created_at: r.get(9)?,
+                    updated_at: r.get(10)?,
+                })
+            },
+        )?;
+        Ok(e)
+    }
+
     pub fn update_lore_entry(&self, e: &LoreEntry) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -1026,13 +1128,15 @@ impl Db {
         title: &str,
         chapter_ids: &str,
         mode: &str,
+        style: &str,
+        motion_style: &str,
     ) -> Result<Video> {
         let conn = self.conn.lock().unwrap();
         let ts = now();
         conn.execute(
-            "INSERT INTO videos (project_id, title, chapter_ids, mode, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-            params![project_id, title, chapter_ids, mode, ts],
+            "INSERT INTO videos (project_id, title, chapter_ids, mode, style, motion_style, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![project_id, title, chapter_ids, mode, style, motion_style, ts],
         )?;
         Ok(Video {
             id: conn.last_insert_rowid(),
@@ -1042,6 +1146,8 @@ impl Db {
             narration: String::new(),
             status: "draft".to_string(),
             mode: mode.to_string(),
+            style: style.to_string(),
+            motion_style: motion_style.to_string(),
             bgm_path: String::new(),
             bgm_volume: 15,
             intro_path: String::new(),
@@ -1056,7 +1162,7 @@ impl Db {
     pub fn list_videos(&self, project_id: i64) -> Result<Vec<Video>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, title, chapter_ids, narration, status, mode, bgm_path, bgm_volume, intro_path, outro_path, output_path, error, created_at, updated_at
+            "SELECT id, project_id, title, chapter_ids, narration, status, mode, bgm_path, bgm_volume, intro_path, outro_path, output_path, error, created_at, updated_at, style, motion_style
              FROM videos WHERE project_id = ?1 ORDER BY id DESC",
         )?;
         let rows = stmt.query_map(params![project_id], |r| {
@@ -1076,6 +1182,8 @@ impl Db {
                 error: r.get(12)?,
                 created_at: r.get(13)?,
                 updated_at: r.get(14)?,
+                style: r.get(15)?,
+                motion_style: r.get(16)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1084,7 +1192,7 @@ impl Db {
     pub fn get_video(&self, id: i64) -> Result<Video> {
         let conn = self.conn.lock().unwrap();
         let v = conn.query_row(
-            "SELECT id, project_id, title, chapter_ids, narration, status, mode, bgm_path, bgm_volume, intro_path, outro_path, output_path, error, created_at, updated_at
+            "SELECT id, project_id, title, chapter_ids, narration, status, mode, bgm_path, bgm_volume, intro_path, outro_path, output_path, error, created_at, updated_at, style, motion_style
              FROM videos WHERE id = ?1",
             params![id],
             |r| {
@@ -1104,6 +1212,8 @@ impl Db {
                     error: r.get(12)?,
                     created_at: r.get(13)?,
                     updated_at: r.get(14)?,
+                    style: r.get(15)?,
+                motion_style: r.get(16)?,
                 })
             },
         )?;
@@ -1124,6 +1234,16 @@ impl Db {
         conn.execute(
             "UPDATE videos SET status = ?1, error = ?2, updated_at = ?3 WHERE id = ?4",
             params![status, error, now(), id],
+        )?;
+        Ok(())
+    }
+
+    /// 设置全片统一画风（生成期注入每个镜头的生图/运动 prompt）
+    pub fn set_video_style(&self, id: i64, style: &str, motion_style: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE videos SET style = ?1, motion_style = ?2, updated_at = ?3 WHERE id = ?4",
+            params![style, motion_style, now(), id],
         )?;
         Ok(())
     }
@@ -1299,13 +1419,14 @@ impl Db {
         sample_chars: i64,
         guide: &str,
         example: &str,
+        kind: &str,
     ) -> Result<Style> {
         let conn = self.conn.lock().unwrap();
         let ts = now();
         conn.execute(
-            "INSERT INTO styles (name, source, sample_chars, guide, example, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![name, source, sample_chars, guide, example, ts],
+            "INSERT INTO styles (name, source, sample_chars, guide, example, kind, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![name, source, sample_chars, guide, example, kind, ts],
         )?;
         Ok(Style {
             id: conn.last_insert_rowid(),
@@ -1314,6 +1435,7 @@ impl Db {
             sample_chars,
             guide: guide.to_string(),
             example: example.to_string(),
+            kind: kind.to_string(),
             created_at: ts,
             updated_at: ts,
         })
@@ -1322,7 +1444,7 @@ impl Db {
     pub fn list_styles(&self) -> Result<Vec<Style>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, source, sample_chars, guide, example, created_at, updated_at
+            "SELECT id, name, source, sample_chars, guide, example, kind, created_at, updated_at
              FROM styles ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -1333,8 +1455,9 @@ impl Db {
                 sample_chars: r.get(3)?,
                 guide: r.get(4)?,
                 example: r.get(5)?,
-                created_at: r.get(6)?,
-                updated_at: r.get(7)?,
+                kind: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

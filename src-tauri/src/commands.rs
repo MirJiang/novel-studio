@@ -2,7 +2,7 @@
 
 use crate::db::{self, Chapter, ChapterMeta, Db, LoreEntry, OutlineItem, Project, Task};
 use crate::image_gen::{self, ImageConfig};
-use crate::llm::{self, LlmConfig, StreamEvent};
+use crate::llm::{self, LlmConfig, LlmProtocol, StreamEvent};
 use crate::tasks::TaskEnd;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -13,9 +13,15 @@ use tauri::{AppHandle, Manager, State};
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ProgressEvent {
-    Progress { current: i64, total: i64, label: String },
+    Progress {
+        current: i64,
+        total: i64,
+        label: String,
+    },
     Done,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 // ---------- 作品 ----------
@@ -124,7 +130,11 @@ pub async fn generate_synopsis(db: State<'_, Db>, project_id: i64) -> Result<Str
                 "user".to_string(),
                 format!(
                     "【设定资料】\n{}\n\n【首章氛围】\n{}",
-                    if lore.is_empty() { "（暂无）" } else { &lore },
+                    if lore.is_empty() {
+                        "（暂无）"
+                    } else {
+                        &lore
+                    },
                     if first_chapter.is_empty() {
                         "（暂无正文）"
                     } else {
@@ -148,7 +158,8 @@ pub async fn generate_synopsis(db: State<'_, Db>, project_id: i64) -> Result<Str
     Ok(text)
 }
 
-/// 上传人物卡参考图：复制到应用数据目录并记录路径，返回存储路径
+/// 上传人物卡参考图：复制到应用数据目录并记录路径，返回存储路径。
+/// 每次换新文件名（旧文件删除）——前端用 asset 协议直读磁盘，同路径覆盖会被缓存坑
 #[tauri::command]
 pub fn set_lore_ref_image(
     app: AppHandle,
@@ -167,8 +178,17 @@ pub fn set_lore_ref_image(
         .map_err(|e| e.to_string())?
         .join("lore_refs");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let dest = dir.join(format!("entry-{entry_id}.{ext}"));
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let dest = dir.join(format!("entry-{entry_id}-{ts}.{ext}"));
     std::fs::copy(&src_path, &dest).map_err(|e| format!("复制参考图失败: {e}"))?;
+    if let Ok(old) = db.get_lore_entry(entry_id) {
+        if !old.ref_image.is_empty() && old.ref_image != dest.to_string_lossy() {
+            let _ = std::fs::remove_file(&old.ref_image);
+        }
+    }
     let dest_str = dest.to_string_lossy().to_string();
     db.set_lore_ref_image(entry_id, &dest_str)
         .map_err(|e| e.to_string())?;
@@ -180,6 +200,74 @@ pub fn set_lore_ref_image(
 pub fn remove_lore_ref_image(db: State<'_, Db>, entry_id: i64) -> Result<(), String> {
     db.set_lore_ref_image(entry_id, "")
         .map_err(|e| e.to_string())
+}
+
+/// 设定图统一尺寸：横版 16:9（三视图并排 / 场景全景都合适）
+const LORE_IMAGE_SIZE: &str = "1920x1080";
+
+/// AI 生成词条设定图：按分类选模板（人物=正/侧/背三视图，地点=场景概念图，
+/// 物品=设定集图，其余=概念插画），存为参考图（覆盖旧的）。
+/// 调研结论（docs/research-video-2026-08.md）：三视图参考比单图跨镜一致性明显更稳
+#[tauri::command]
+pub async fn generate_lore_ref_image(
+    app: AppHandle,
+    db: State<'_, Db>,
+    entry_id: i64,
+    style: Option<String>,
+) -> Result<String, String> {
+    let entry = db.get_lore_entry(entry_id).map_err(|e| e.to_string())?;
+    if entry.content.trim().is_empty() {
+        return Err("词条内容为空，先写点描述再生成".to_string());
+    }
+    let desc: String = entry.content.trim().chars().take(300).collect();
+    let title = entry.title.trim();
+    let prompt = match entry.category.as_str() {
+        "人物" => format!(
+            "角色设定三视图：同一人物「{title}」的正面、侧面、背面三个视角并排站立，全身像，统一姿势，纯色简洁背景。\
+             人物描述：{desc}。精致动漫人设图风格，线条清晰，色彩明快，画面中无文字"
+        ),
+        "地点" => format!(
+            "场景概念图：「{title}」。场景描述：{desc}。\
+             宽幅全景视角，环境概念设计图风格，空间层次与光线氛围明确，细节丰富，画面中无文字"
+        ),
+        "物品" => format!(
+            "物品设定图：「{title}」。物品描述：{desc}。\
+             主体居中完整展示，纯色简洁背景，设定集插画风格，材质与形制细节清晰，画面中无文字"
+        ),
+        _ => format!(
+            "概念插画：「{title}」。描述：{desc}。\
+             构图完整，氛围明确，精致插画风格，画面中无文字"
+        ),
+    };
+    // 画风锚点（风格库 image 卡/内置预设），追加在描述后统一风格
+    let prompt = match style.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => format!("{prompt}，{s}"),
+        None => prompt,
+    };
+    let cfg = load_image_config(&db);
+    let bytes = image_gen::generate_image(&cfg, &prompt, LORE_IMAGE_SIZE, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("lore_refs");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // 每次换新文件名（旧文件删除）：asset 协议按路径缓存，同路径覆盖会显示旧图
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let dest = dir.join(format!("entry-{entry_id}-{ts}.png"));
+    std::fs::write(&dest, &bytes).map_err(|e| format!("保存设定图失败: {e}"))?;
+    if !entry.ref_image.is_empty() {
+        let _ = std::fs::remove_file(&entry.ref_image);
+    }
+    let dest_str = dest.to_string_lossy().to_string();
+    db.set_lore_ref_image(entry_id, &dest_str)
+        .map_err(|e| e.to_string())?;
+    Ok(dest_str)
 }
 
 // ---------- 章节 ----------
@@ -268,11 +356,7 @@ pub fn set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), 
 // ---------- 导出 ----------
 
 #[tauri::command]
-pub fn export_project(
-    db: State<'_, Db>,
-    project_id: i64,
-    path: String,
-) -> Result<String, String> {
+pub fn export_project(db: State<'_, Db>, project_id: i64, path: String) -> Result<String, String> {
     let bodies = db
         .list_chapter_bodies(project_id)
         .map_err(|e| e.to_string())?;
@@ -335,13 +419,18 @@ pub async fn generate_cover(
     prompt: String,
     title: String,
     author: String,
+    style: Option<String>,
 ) -> Result<CoverResult, String> {
     // 描述留空：根据书名/题材/简介/首章氛围自动总结画面描述
-    let prompt = if prompt.trim().is_empty() {
+    let mut prompt = if prompt.trim().is_empty() {
         summarize_cover_prompt(&db, project_id).await?
     } else {
         prompt.trim().to_string()
     };
+    // 画风锚点（风格库 image 卡/内置预设）：追加在描述后，统一画面风格
+    if let Some(s) = style.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        prompt = format!("{prompt}，{s}");
+    }
     let cfg = load_image_config(&db);
     let raw = image_gen::generate_image(&cfg, &prompt, image_gen::COVER_SIZE, &[])
         .await
@@ -472,6 +561,11 @@ const SYSTEM_PROMPT: &str = "你是一位经验丰富的中文网文作家（番
 - 对白要有目的：带新信息、带关系位置、带压迫感；每个人说话带身份感，不像说明书\n\
 - 去 AI 味是硬要求：能用动作不用总结，能用对白不用解释，能写具体不写抽象；\
 不写“空气仿佛凝固”式套话，不堆辞藻，句式长短错落\n\
+【画面感】\n\
+- 重要人物、场景、关键物品首次登场时，顺着角色的视线或动作自然带出具体外观\
+（长相/穿着/标志物、环境布局/光线/氛围、物品材质/形制），一两句融入叙事，\
+不罗列、不停下来说明——这些细节会被用于封面与视频生成\n\
+- 已在设定资料里登记的外貌/环境细节，再次写到时保持一致\n\
 直接输出正文内容，不要输出章节标题、解释或任何元信息。";
 
 const TRANSFORM_SYSTEM_PROMPT: &str = "你是一位经验丰富的中文网文编辑。\
@@ -488,10 +582,19 @@ pub(crate) fn load_llm_config(db: &Db) -> LlmConfig {
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| default.to_string())
     };
+    let base_url = read("llm_base_url", "https://api.deepseek.com/v1");
+    // 协议只两套（D27）：显式设置优先；未设置时按域名自动识别 Claude
+    let protocol = match read("llm_protocol", "").as_str() {
+        "anthropic" => LlmProtocol::Anthropic,
+        "openai" => LlmProtocol::OpenAI,
+        _ if base_url.contains("anthropic") => LlmProtocol::Anthropic,
+        _ => LlmProtocol::OpenAI,
+    };
     LlmConfig {
-        base_url: read("llm_base_url", "https://api.deepseek.com/v1"),
+        base_url,
         api_key: read("llm_api_key", ""),
         model: read("llm_model", "deepseek-chat"),
+        protocol,
     }
 }
 
@@ -503,13 +606,15 @@ fn tail_chars(text: &str, max: usize) -> String {
 
 /// 命中规则：常驻注入，或任一关键词出现在上下文中。
 /// 返回 (设定文本, 注入的条目标题)
-pub(crate) fn build_lore_section(entries: &[LoreEntry], context_text: &str) -> (String, Vec<String>) {
+pub(crate) fn build_lore_section(
+    entries: &[LoreEntry],
+    context_text: &str,
+) -> (String, Vec<String>) {
     let mut section = String::new();
     let mut titles = Vec::new();
     for e in entries.iter().filter(|e| e.enabled) {
         let hit = e.always_include
-            || e
-                .keywords
+            || e.keywords
                 .split([',', '，'])
                 .map(str::trim)
                 .filter(|k| !k.is_empty())
@@ -517,12 +622,7 @@ pub(crate) fn build_lore_section(entries: &[LoreEntry], context_text: &str) -> (
         if !hit {
             continue;
         }
-        let block = format!(
-            "◆ {}（{}）\n{}\n\n",
-            e.title,
-            e.category,
-            e.content.trim()
-        );
+        let block = format!("◆ {}（{}）\n{}\n\n", e.title, e.category, e.content.trim());
         if section.len() + block.len() > MAX_LORE_CHARS {
             break; // 超预算就截断，保证 prompt 可控
         }
@@ -618,9 +718,7 @@ pub async fn ai_continue(
     let context_tail = tail_chars(&plain, CONTEXT_TAIL_CHARS);
 
     // 设定库注入：常驻词条 + 关键词命中词条
-    let entries = db
-        .list_lore_entries(chapter.project_id)
-        .unwrap_or_default();
+    let entries = db.list_lore_entries(chapter.project_id).unwrap_or_default();
     let (lore_section, injected) = build_lore_section(&entries, &context_tail);
 
     // 前情摘要注入：当前章之前所有章的摘要
@@ -694,10 +792,7 @@ pub async fn ai_continue(
 
     llm::stream_chat(
         cfg,
-        vec![
-            ("system".to_string(), system),
-            ("user".to_string(), user),
-        ],
+        vec![("system".to_string(), system), ("user".to_string(), user)],
         channel,
     )
     .await
@@ -739,9 +834,7 @@ pub async fn ai_transform(
     // 上下文 + 设定注入（与续写同一套规则，保证人设一致）
     let plain = db::html_to_text(&chapter.content);
     let context_tail = tail_chars(&plain, 1500);
-    let entries = db
-        .list_lore_entries(chapter.project_id)
-        .unwrap_or_default();
+    let entries = db.list_lore_entries(chapter.project_id).unwrap_or_default();
     let lore_context = format!("{context_tail}\n{selected_text}");
     let (lore_section, injected) = build_lore_section(&entries, &lore_context);
 
@@ -776,10 +869,7 @@ pub async fn ai_transform(
 
     llm::stream_chat(
         cfg,
-        vec![
-            ("system".to_string(), system),
-            ("user".to_string(), user),
-        ],
+        vec![("system".to_string(), system), ("user".to_string(), user)],
         channel,
     )
     .await
@@ -956,8 +1046,8 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         chapter_count: i64,
         words_per_chapter: i64,
     }
-    let payload: Payload = serde_json::from_str(&task.payload)
-        .map_err(|e| format!("任务参数解析失败: {e}"))?;
+    let payload: Payload =
+        serde_json::from_str(&task.payload).map_err(|e| format!("任务参数解析失败: {e}"))?;
     let project_id = task.project_id;
 
     let project = db
@@ -981,7 +1071,9 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
     let mut count = payload.chapter_count;
     if count <= 0 {
         if project.target_total_words <= 0 {
-            return Err("还未设置全书目标字数：请先在弹层里填目标字数，或改为按章数生成".to_string());
+            return Err(
+                "还未设置全书目标字数：请先在弹层里填目标字数，或改为按章数生成".to_string(),
+            );
         }
         let written = db.total_word_count(project_id).map_err(|e| e.to_string())?;
         let remaining = project.target_total_words - written;
@@ -1065,7 +1157,10 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
             if project.synopsis.trim().is_empty() {
                 "【前文】\n（这是一个新章节的开头，请直接开始创作）".to_string()
             } else {
-                format!("【作品简介】\n{}\n\n【前文】\n（这是全书第一章，请依据简介直接开始创作）", project.synopsis.trim())
+                format!(
+                    "【作品简介】\n{}\n\n【前文】\n（这是全书第一章，请依据简介直接开始创作）",
+                    project.synopsis.trim()
+                )
             }
         } else {
             format!("【前文】\n{context_tail}")
@@ -1080,10 +1175,7 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
 
         let text = llm::chat_once(
             cfg.clone(),
-            vec![
-                ("system".to_string(), system),
-                ("user".to_string(), user),
-            ],
+            vec![("system".to_string(), system), ("user".to_string(), user)],
         )
         .await
         .map_err(|e| format!("《{title}》生成失败（已完成 {i} 章）: {e}"))?;
@@ -1205,7 +1297,11 @@ async fn advance_outline(db: &Db, cfg: &LlmConfig, project_id: i64, written: &[(
                 "{}. {}{}",
                 i + 1,
                 it.title,
-                if it.status == "done" { "【已完成】" } else { "" }
+                if it.status == "done" {
+                    "【已完成】"
+                } else {
+                    ""
+                }
             )
         })
         .collect::<Vec<_>>()
@@ -1236,7 +1332,9 @@ async fn advance_outline(db: &Db, cfg: &LlmConfig, project_id: i64, written: &[(
 
     let Ok(text) = resp else { return };
     let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-    let Ok(n) = digits.parse::<usize>() else { return };
+    let Ok(n) = digits.parse::<usize>() else {
+        return;
+    };
     if n == 0 {
         return;
     }
@@ -1300,7 +1398,9 @@ pub async fn check_consistency(
     }
 
     // 设定资料（全量启用词条，预算内）
-    let entries = db.list_lore_entries(project_id).map_err(|e| e.to_string())?;
+    let entries = db
+        .list_lore_entries(project_id)
+        .map_err(|e| e.to_string())?;
     let mut lore_section = String::new();
     for e in entries.iter().filter(|e| e.enabled) {
         let block = format!("◆ {}（{}）\n{}\n\n", e.title, e.category, e.content.trim());
@@ -1334,7 +1434,10 @@ pub async fn check_consistency(
     });
 
     let missing_note = if with_summary < total {
-        format!("\n\n注意：共 {total} 章，其中 {} 章缺少摘要，未纳入本次检查。", total - with_summary)
+        format!(
+            "\n\n注意：共 {total} 章，其中 {} 章缺少摘要，未纳入本次检查。",
+            total - with_summary
+        )
     } else {
         String::new()
     };
@@ -1494,8 +1597,8 @@ pub async fn generate_outline(
 
     let start = raw.find('[').ok_or("大纲结果不是 JSON 数组")?;
     let end = raw.rfind(']').ok_or("大纲结果不是 JSON 数组")?;
-    let drafts: Vec<OutlineDraft> = serde_json::from_str(&raw[start..=end])
-        .map_err(|e| format!("大纲 JSON 解析失败: {e}"))?;
+    let drafts: Vec<OutlineDraft> =
+        serde_json::from_str(&raw[start..=end]).map_err(|e| format!("大纲 JSON 解析失败: {e}"))?;
     let items: Vec<(String, String)> = drafts
         .into_iter()
         .map(|d| (d.title.trim().to_string(), d.content.trim().to_string()))
@@ -1583,10 +1686,7 @@ lore 生成 4~6 条，必须包含：\
 category 只能是：人物 / 世界观 / 地点 / 物品 / 伏笔 / 其他。";
 
 #[tauri::command]
-pub async fn ai_bootstrap_draft(
-    db: State<'_, Db>,
-    idea: String,
-) -> Result<BootstrapDraft, String> {
+pub async fn ai_bootstrap_draft(db: State<'_, Db>, idea: String) -> Result<BootstrapDraft, String> {
     if idea.trim().is_empty() {
         return Err("请先写一句创意".to_string());
     }
@@ -1675,12 +1775,14 @@ pub async fn ai_bootstrap_chat(
         return Err("对话为空".to_string());
     }
     let cfg = load_llm_config(&db);
-    let mut msgs: Vec<(String, String)> = vec![(
-        "system".to_string(),
-        BOOTSTRAP_CHAT_SYSTEM.to_string(),
-    )];
+    let mut msgs: Vec<(String, String)> =
+        vec![("system".to_string(), BOOTSTRAP_CHAT_SYSTEM.to_string())];
     for m in messages {
-        let role = if m.role == "assistant" { "assistant" } else { "user" };
+        let role = if m.role == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
         msgs.push((role.to_string(), m.content));
     }
     let raw = llm::chat_once(cfg, msgs).await.map_err(|e| e.to_string())?;
@@ -1724,7 +1826,11 @@ pub async fn ai_bootstrap_chat_stream(
     let mut msgs: Vec<(String, String)> =
         vec![("system".to_string(), BOOTSTRAP_CHAT_SYSTEM.to_string())];
     for m in messages {
-        let role = if m.role == "assistant" { "assistant" } else { "user" };
+        let role = if m.role == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
         msgs.push((role.to_string(), m.content));
     }
     llm::stream_chat(cfg, msgs, channel)
@@ -1861,10 +1967,16 @@ pub async fn assistant_chat(
     }
     context.push_str("以上是本书的资料，请基于它们回答。");
 
-    let mut msgs: Vec<(String, String)> =
-        vec![("system".to_string(), system), ("user".to_string(), context)];
+    let mut msgs: Vec<(String, String)> = vec![
+        ("system".to_string(), system),
+        ("user".to_string(), context),
+    ];
     for m in messages {
-        let role = if m.role == "assistant" { "assistant" } else { "user" };
+        let role = if m.role == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
         msgs.push((role.to_string(), m.content));
     }
     llm::stream_chat(cfg, msgs, channel)
@@ -2027,8 +2139,8 @@ pub async fn locate_rewrite_scope(
         chapter_id: i64,
         reason: String,
     }
-    let raw_items: Vec<RawItem> = serde_json::from_str(&raw[start..=end])
-        .map_err(|e| format!("定位结果解析失败: {e}"))?;
+    let raw_items: Vec<RawItem> =
+        serde_json::from_str(&raw[start..=end]).map_err(|e| format!("定位结果解析失败: {e}"))?;
     let title_of = |cid: i64| {
         summaries
             .iter()
@@ -2055,8 +2167,8 @@ pub(crate) async fn run_rewrite_chapters(db: &Db, task: &Task) -> Result<TaskEnd
         chapter_ids: Vec<i64>,
         instruction: String,
     }
-    let payload: Payload = serde_json::from_str(&task.payload)
-        .map_err(|e| format!("任务参数解析失败: {e}"))?;
+    let payload: Payload =
+        serde_json::from_str(&task.payload).map_err(|e| format!("任务参数解析失败: {e}"))?;
     let total = payload.chapter_ids.len() as i64;
     if total == 0 {
         return Err("没有要改写的章节".to_string());
@@ -2075,7 +2187,8 @@ pub(crate) async fn run_rewrite_chapters(db: &Db, task: &Task) -> Result<TaskEnd
         let _ = db.update_task_progress(task.id, i as i64, total, &chapter.title);
 
         // 先快照，再改写——回滚的数据基础
-        db.backup_chapter(task.id, *cid).map_err(|e| e.to_string())?;
+        db.backup_chapter(task.id, *cid)
+            .map_err(|e| e.to_string())?;
 
         let user = match build_rewrite_user(db, &chapter, &payload.instruction) {
             Ok(u) => u,
@@ -2106,7 +2219,11 @@ pub(crate) async fn run_rewrite_chapters(db: &Db, task: &Task) -> Result<TaskEnd
 
     let mut msg = format!("已改写 {done} 章");
     if !skipped.is_empty() {
-        msg.push_str(&format!("，跳过 {} 章（{}）", skipped.len(), skipped.join("、")));
+        msg.push_str(&format!(
+            "，跳过 {} 章（{}）",
+            skipped.len(),
+            skipped.join("、")
+        ));
     }
     msg.push_str("，快照已存，可在任务面板回滚");
     let _ = db.update_task_progress(task.id, done, total, "完成");
@@ -2155,7 +2272,9 @@ pub fn scan_banned_words(
     if words.is_empty() {
         return Err("请先填要扫描的敏感词".to_string());
     }
-    let bodies = db.list_chapter_bodies(project_id).map_err(|e| e.to_string())?;
+    let bodies = db
+        .list_chapter_bodies(project_id)
+        .map_err(|e| e.to_string())?;
     // 需要 chapter_id，改用 chapters 全量查询
     let metas = db.list_chapters(project_id).map_err(|e| e.to_string())?;
     let mut hits = Vec::new();
@@ -2185,4 +2304,128 @@ pub fn scan_banned_words(
         }
     }
     Ok(hits)
+}
+
+const COLLECT_LORE_SYSTEM: &str = "你是小说设定整理员。通读章节梗概，搜集对创作和视觉化有用的设定条目：
+【人物】出场的重要角色：身份、外貌特征（长相/穿着/标志物）、性格、能力
+【地点】重要场景：环境布局、光线氛围、地标
+【物品】关键道具：外观形制、功能、来历
+【世界观】势力/规则/体系（确有必要才建，不超过 2 条）
+要求：
+- 「已登记词条」里已有的不要重复搜集；
+- 每条 content 不超过 150 字，必须包含外观/视觉细节（后续要据此生成设定图）；
+- keywords 给 1~3 个称呼/别名，逗号分隔；
+- category 只能是：人物 / 地点 / 物品 / 世界观 / 其他；
+- 只输出 JSON 数组：[{\"title\":\"\",\"category\":\"\",\"content\":\"\",\"keywords\":\"\"}…]，不要输出任何其他内容。";
+
+/// AI 搜集设定：读全书摘要链（缺摘要的章补正文头部），提取人物/地点/物品等词条入库。
+/// 素材预算 8000 字（体检同规格）；已登记的标题跳过不重复
+#[tauri::command]
+pub async fn collect_lore_entries(db: State<'_, Db>, project_id: i64) -> Result<String, String> {
+    const BUDGET: usize = 8000;
+    let mut material = String::new();
+    for (_, title, summary) in db
+        .list_summaries_with_id(project_id)
+        .map_err(|e| e.to_string())?
+    {
+        material.push_str(&format!("《{title}》{summary}
+"));
+    }
+    for ch in db
+        .list_chapters_missing_summary(project_id)
+        .map_err(|e| e.to_string())?
+    {
+        let plain = crate::db::html_to_text(&ch.content);
+        let head: String = plain.chars().take(300).collect();
+        if !head.trim().is_empty() {
+            material.push_str(&format!("《{}》（节选）{}
+", ch.title, head));
+        }
+    }
+    if material.trim().is_empty() {
+        return Err("还没有正文内容，先写几章再来搜集".to_string());
+    }
+    if material.chars().count() > BUDGET {
+        material = material.chars().take(BUDGET).collect();
+    }
+
+    let existing = db.list_lore_entries(project_id).unwrap_or_default();
+    let existing_titles: Vec<String> = existing
+        .iter()
+        .map(|e| e.title.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    let cfg = load_llm_config(&db);
+    let raw = llm::chat_once(
+        cfg,
+        vec![
+            ("system".to_string(), COLLECT_LORE_SYSTEM.to_string()),
+            (
+                "user".to_string(),
+                format!(
+                    "【已登记词条】
+{}
+
+【章节梗概】
+{}",
+                    if existing_titles.is_empty() {
+                        "（无）".to_string()
+                    } else {
+                        existing_titles.join("、")
+                    },
+                    material
+                ),
+            ),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    #[derive(serde::Deserialize)]
+    struct Draft {
+        title: String,
+        category: String,
+        content: String,
+        keywords: String,
+    }
+    let start = raw.find('[').ok_or("搜集结果不是 JSON 数组")?;
+    let end = raw.rfind(']').ok_or("搜集结果不是 JSON 数组")?;
+    let drafts: Vec<Draft> = serde_json::from_str(&raw[start..=end])
+        .map_err(|e| format!("搜集结果解析失败: {e}"))?;
+
+    const VALID: [&str; 5] = ["人物", "地点", "物品", "世界观", "其他"];
+    let mut created = 0usize;
+    let mut per_cat: std::collections::HashMap<String, usize> = Default::default();
+    for d in drafts.into_iter().take(20) {
+        let title = d.title.trim();
+        if title.is_empty() || existing_titles.iter().any(|t| t == title) {
+            continue;
+        }
+        let category = if VALID.contains(&d.category.trim()) {
+            d.category.trim()
+        } else {
+            "其他"
+        };
+        let e = db
+            .create_lore_entry(project_id, title, category)
+            .map_err(|e| e.to_string())?;
+        db.update_lore_entry(&crate::db::LoreEntry {
+            content: d.content.trim().to_string(),
+            keywords: d.keywords.trim().to_string(),
+            ..e
+        })
+        .map_err(|e| e.to_string())?;
+        *per_cat.entry(category.to_string()).or_default() += 1;
+        created += 1;
+    }
+    if created == 0 {
+        return Ok("没有发现新设定（已有的都登记过了）".to_string());
+    }
+    let breakdown = per_cat
+        .iter()
+        .map(|(c, n)| format!("{c}×{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok(format!("新搜集 {created} 条：{breakdown}"))
 }

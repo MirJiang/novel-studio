@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { IMAGE_PRESETS } from "../lib/stylePresets";
+import type { Style } from "../types";
 
 interface CoverViewProps {
   projectId: number;
@@ -20,6 +22,8 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
   const [covers, setCovers] = useState<string[]>([]);
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [coverStyle, setCoverStyle] = useState(""); // 画风锚点词（风格库）
+  const [myImageStyles, setMyImageStyles] = useState<Style[]>([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -34,11 +38,15 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
     void api.getSetting("author_name").then((v) => {
       if (v) setAuthor(v);
     });
+    void api
+      .listStyles()
+      .then((all) => setMyImageStyles(all.filter((s) => s.kind === "image")))
+      .catch(() => {});
   }, [projectId, refresh]);
 
-  const pick = async (path: string) => {
+  const pick = (path: string) => {
     setSelectedPath(path);
-    setSelectedUrl(await api.getCoverData(path));
+    setSelectedUrl(api.fileUrl(path)); // asset 协议直读磁盘，不再走 data URL
   };
 
   const generate = async () => {
@@ -48,7 +56,7 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
     const autoDescribe = !prompt.trim();
     try {
       await api.setSetting("author_name", author);
-      const r = await api.generateCover(projectId, prompt, title, author);
+      const r = await api.generateCover(projectId, prompt, title, author, coverStyle);
       setSelectedUrl(r.data_url);
       setSelectedPath(r.path);
       // 自动总结的描述回填到输入框，方便微调后重新生成
@@ -87,6 +95,34 @@ export function CoverView({ projectId, projectName }: CoverViewProps) {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
           />
+        </label>
+
+        <label className="mt-4 block">
+          <span className="mb-1.5 block text-xs font-medium text-muted">
+            画风
+            <span className="ml-1.5 font-normal text-faint">
+              风格库预设/自定义，追加在描述后
+            </span>
+          </span>
+          <select
+            className="w-full rounded-[10px] bg-card/60 px-2.5 py-2 text-sm shadow-card outline-none focus:bg-surface"
+            value={coverStyle}
+            onChange={(e) => setCoverStyle(e.target.value)}
+          >
+            <option value="">不指定</option>
+            {[
+              ...IMAGE_PRESETS.map((p) => ({ key: `p:${p.name}`, ...p })),
+              ...myImageStyles.map((s) => ({
+                key: `u:${s.id}`,
+                name: s.name,
+                guide: s.guide,
+              })),
+            ].map((o) => (
+              <option key={o.key} value={o.guide}>
+                {o.name}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="mt-4 block">
@@ -182,17 +218,8 @@ function CoverThumb({
   active: boolean;
   onPick: (path: string) => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void api.getCoverData(path).then((u) => {
-      if (!cancelled) setUrl(u);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [path]);
+  // asset 协议直读磁盘，同步出 URL，WebView 缓存管二次加载
+  const url = api.fileUrl(path);
 
   return (
     <button
@@ -203,11 +230,12 @@ function CoverThumb({
           : "shadow-card hover:-translate-y-0.5 hover:shadow-lift"
       }`}
     >
-      {url ? (
-        <img src={url} alt="历史封面" className="h-24 w-[72px] object-cover" />
-      ) : (
-        <div className="h-24 w-[72px] animate-pulse bg-card/60" />
-      )}
+      <img
+        src={url}
+        alt="历史封面"
+        loading="lazy"
+        className="h-24 w-[72px] bg-card/60 object-cover"
+      />
     </button>
   );
 }

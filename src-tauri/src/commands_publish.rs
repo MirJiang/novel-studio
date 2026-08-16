@@ -284,7 +284,11 @@ pub async fn fill_douyin_caption(
     let caption = format!(
         "{}\n\n#小说推文 #番茄小说{}",
         video.title,
-        if tag.is_empty() { String::new() } else { format!(" #{tag}") }
+        if tag.is_empty() {
+            String::new()
+        } else {
+            format!(" #{tag}")
+        }
     );
 
     let script = DOUYIN_FILL_SCRIPT
