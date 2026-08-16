@@ -63,7 +63,7 @@ export function BatchWriteDialog({
 
   const start = (wholeBook: boolean) => {
     onStart({
-      chapterCount: wholeBook ? 0 : Math.min(parseWords(count) || 1, 50),
+      chapterCount: wholeBook ? 0 : Math.min(parseWords(count) || 1, 200),
       wordsPerChapter: wpc,
       totalWords: parseWords(totalWords),
       chapterWords: parseWords(chapterWords),
@@ -119,7 +119,7 @@ export function BatchWriteDialog({
           <input
             disabled={running}
             className="w-32 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2 disabled:opacity-50"
-            placeholder="1 ~ 50"
+            placeholder="1 ~ 200"
             inputMode="numeric"
             value={count}
             onChange={(e) => setCount(e.target.value)}
@@ -173,7 +173,7 @@ export function BatchWriteDialog({
                 className="rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
                 onClick={() => start(false)}
               >
-                开始生成 {Math.min(parseWords(count) || 1, 50)} 章
+                开始生成 {Math.min(parseWords(count) || 1, 200)} 章
               </button>
               <button
                 disabled={target <= 0 || remainingChapters <= 0}

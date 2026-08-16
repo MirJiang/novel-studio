@@ -91,6 +91,8 @@ pub fn run() {
             commands_style::list_styles,
             commands_style::delete_style,
             commands_style::set_project_style,
+            commands_style::generate_style_card,
+            commands_style::save_style_card,
             commands_publish::open_fanqie_window,
             commands_publish::fill_chapter_draft,
             commands_publish::open_douyin_window,

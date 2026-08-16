@@ -27,6 +27,13 @@ export function StylesView({
   const fileRef = useRef<HTMLInputElement>(null);
   const [distilling, setDistilling] = useState(false);
 
+  // 对话生成风格
+  const [idea, setIdea] = useState("");
+  const [cardPreview, setCardPreview] = useState<string | null>(null);
+  const [tweak, setTweak] = useState("");
+  const [cardBusy, setCardBusy] = useState(false);
+  const [cardName, setCardName] = useState("");
+
   const refresh = useCallback(async () => {
     try {
       setStyles(await api.listStyles());
@@ -64,6 +71,46 @@ export function StylesView({
     }
   };
 
+  /** 对话生成：描述出卡 / 带微调出卡 */
+  const genCard = async (isTweak: boolean) => {
+    if (cardBusy) return;
+    if (isTweak && (!cardPreview || !tweak.trim())) return;
+    if (!isTweak && !idea.trim()) return;
+    setCardBusy(true);
+    setError(null);
+    try {
+      const card = await api.generateStyleCard(
+        idea.trim(),
+        isTweak ? cardPreview ?? undefined : undefined,
+        isTweak ? tweak.trim() : undefined
+      );
+      setCardPreview(card);
+      setTweak("");
+      if (!cardName.trim() && idea.trim()) setCardName(idea.trim().slice(0, 12));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCardBusy(false);
+    }
+  };
+
+  const saveCard = async () => {
+    if (!cardPreview || !cardName.trim()) return;
+    try {
+      await api.saveStyleCard(
+        cardName.trim(),
+        idea.trim() ? `对话生成：${idea.trim().slice(0, 30)}` : "对话生成",
+        cardPreview
+      );
+      setCardPreview(null);
+      setIdea("");
+      setCardName("");
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const applyToCurrent = async (styleId: number) => {
     if (currentProjectId == null) return;
     try {
@@ -96,8 +143,69 @@ export function StylesView({
           写正文时会模仿该风格。样本仅在本地分析，建议使用公版或免费授权作品。
         </p>
 
-        {/* 创建风格卡片 */}
+        {/* 对话生成风格 */}
         <div className="mt-6 rounded-2xl bg-surface p-5 shadow-card">
+          <p className="text-[13px] font-semibold text-ink">对话生成</p>
+          <div className="mt-2 flex gap-2">
+            <input
+              className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+              placeholder="描述想要的风格，如：古龙风、番茄重生年代文的爽感"
+              value={idea}
+              onChange={(e) => setIdea(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void genCard(false)}
+            />
+            <button
+              disabled={cardBusy || !idea.trim()}
+              onClick={() => void genCard(false)}
+              className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+            >
+              {cardBusy && !cardPreview ? "生成中…" : "生成风格卡"}
+            </button>
+          </div>
+          {cardPreview && (
+            <div className="mt-3">
+              <p className="whitespace-pre-wrap rounded-xl bg-canvas px-3.5 py-3 text-[13px] leading-6 text-body">
+                {cardPreview}
+              </p>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+                  placeholder="微调，如：句子再短一点，对话再多些"
+                  value={tweak}
+                  disabled={cardBusy}
+                  onChange={(e) => setTweak(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void genCard(true)}
+                />
+                <button
+                  disabled={cardBusy || !tweak.trim()}
+                  onClick={() => void genCard(true)}
+                  className="shrink-0 rounded-full bg-white/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                >
+                  {cardBusy ? "调整中…" : "调整"}
+                </button>
+              </div>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+                  placeholder="风格名称"
+                  value={cardName}
+                  onChange={(e) => setCardName(e.target.value)}
+                />
+                <button
+                  disabled={!cardName.trim()}
+                  onClick={() => void saveCard()}
+                  className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+                >
+                  保存到风格库
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 创建风格卡片（上传文本蒸馏） */}
+        <div className="mt-4 rounded-2xl bg-surface p-5 shadow-card">
+          <p className="mb-2 text-[13px] font-semibold text-ink">上传小说蒸馏</p>
           <div className="flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"

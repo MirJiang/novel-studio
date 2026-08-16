@@ -166,7 +166,7 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 - AI 起书（对话式）：书架「AI 辅助创建」→ 整页覆盖层，左对话右草稿四页签（基础信息/设定/大纲/开篇流程）；
   AI 策划多轮提问（题材/卖点/主角/爽点/篇幅，每轮至多 1~2 问），信息够了自动出草稿（[DRAFT] 标记 + JSON，
   含分卷大纲 outline + 前 10 章章纲 opening，创建时落库为 outline_items，开篇流程作首节点）
-  （ai_bootstrap_chat_stream 流式 + AICreateWizard.tsx 整页覆盖层；会话自动存 chat_sessions 表（v11），
+  （批量写章上限 2000 章防呆；ai_bootstrap_chat_stream 流式 + AICreateWizard.tsx 整页覆盖层；会话自动存 chat_sessions 表（v11），
   「新会话」归档当前、「历史」面板可回看/继续/删除；创建成功后自动开新会话，旧的不丢）
 - 作品简介与大纲：侧栏第三 Tab；番茄风简介 AI 生成/手改；分卷大纲节点可编辑可标记完成，
   进度条管控；**大纲注入续写 prompt**（600 字预算，首个未完成节点标 ◀当前）
@@ -181,7 +181,8 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
   「跨章改写」LLM 按摘要链定位受影响章节 → 勾选确认 → 队列逐章改写（每章先快照 chapter_backups v12，
   任务面板可整批回滚；改写后自动重生成摘要）
 - 合规扫描：体检页填敏感词 → 纯文本检索命中清单（章节/词/上下文）→ 一键入队整改（复用跨章改写）
-- 写作风格库：AppRail「风格」页，本地 txt/粘贴文本取样本 → LLM 蒸馏风格卡
+- 写作风格库：AppRail「风格」页，两条路——对话生成（描述风格如"古龙风"→ 出卡 → 追问微调 → 保存）；
+  本地 txt/粘贴文本取样本 → LLM 蒸馏风格卡
   （基调/句式/用词/视角/对话/钩子，≤400 字）→ 创建作品时选用；
   注入 AI 续写/批量写章/划词三件套的 system prompt（预算 800 字，meta 明细可见"风格：XXX"）
 - 发布到番茄：AppRail「发布」页 → open_fanqie_window 开番茄后台窗口（fanqienovel.com/main/writer/，扫码登录持久化免登）

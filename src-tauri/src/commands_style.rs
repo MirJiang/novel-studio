@@ -103,3 +103,56 @@ pub fn set_project_style(db: State<'_, Db>, project_id: i64, style_id: i64) -> R
     db.set_project_style(project_id, style_id)
         .map_err(|e| e.to_string())
 }
+
+const STYLE_CARD_SYSTEM: &str = "你是文学风格分析师兼作家。按用户的描述产出一张网文写作风格卡。\
+描述里提到具体作家/作品时，凭你的知识概括其公开可见的风格特征，绝不复述或模仿原文句子。\
+按六个小节输出，每节一两句，总共不超过 400 字：\n\
+【整体基调】【句式与节奏】【用词偏好】【叙事视角】【对话风格】【钩子与爽点】\n\
+只输出风格卡本身，不要解释。";
+
+/// 对话生成风格卡：纯描述出卡；带 previous_guide + tweak 时是微调（输出调整后的完整卡）
+#[tauri::command]
+pub async fn generate_style_card(
+    db: State<'_, Db>,
+    guidance: String,
+    previous_guide: Option<String>,
+    tweak: Option<String>,
+) -> Result<String, String> {
+    let cfg = load_llm_config(&db);
+    let user = match (previous_guide, tweak) {
+        (Some(prev), Some(tw)) if !prev.trim().is_empty() && !tw.trim().is_empty() => format!(
+            "【已有风格卡】\n{}\n\n【调整要求】\n{}\n\n输出调整后的完整风格卡（格式不变）。",
+            prev.trim(),
+            tw.trim()
+        ),
+        _ => format!("【风格描述】\n{}", guidance.trim()),
+    };
+    llm::chat_once(
+        cfg,
+        vec![
+            ("system".to_string(), STYLE_CARD_SYSTEM.to_string()),
+            ("user".to_string(), user),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// 保存对话生成的风格卡
+#[tauri::command]
+pub fn save_style_card(
+    db: State<'_, Db>,
+    name: String,
+    source: String,
+    guide: String,
+) -> Result<Style, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("请给风格起个名字".to_string());
+    }
+    if guide.trim().is_empty() {
+        return Err("风格卡内容为空".to_string());
+    }
+    db.create_style(&name, source.trim(), 0, guide.trim(), "")
+        .map_err(|e| e.to_string())
+}

@@ -38,6 +38,13 @@ pub fn is_cancel_requested(task_id: i64) -> bool {
 
 /// 应用启动时 spawn 唯一 worker（在 lib.rs setup 里调用）
 pub fn spawn_worker(app: AppHandle, db: Db) {
+    // 启动恢复：上次进程退出时还在 running 的任务标记为中断（可重试）
+    {
+        let conn = db.clone();
+        if let Err(e) = conn.interrupt_running_tasks() {
+            eprintln!("恢复中断任务失败: {e}");
+        }
+    }
     // 必须走 tauri 的 async_runtime：setup 阶段没有 Tokio runtime 上下文，
     // 直接 tokio::spawn 会 panic（there is no reactor running）
     tauri::async_runtime::spawn(async move {

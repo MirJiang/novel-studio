@@ -391,6 +391,22 @@ export const api = {
 
   deleteStyle: (id: number) => invoke<void>("delete_style", { id }),
 
+  /** 对话生成风格卡（带 previousGuide + tweak 时为微调） */
+  generateStyleCard: (
+    guidance: string,
+    previousGuide?: string,
+    tweak?: string
+  ) =>
+    invoke<string>("generate_style_card", {
+      guidance,
+      previousGuide: previousGuide ?? null,
+      tweak: tweak ?? null,
+    }),
+
+  /** 保存对话生成的风格卡 */
+  saveStyleCard: (name: string, source: string, guide: string) =>
+    invoke<Style>("save_style_card", { name, source, guide }),
+
   // ---------- 发布（番茄作家后台，fill-only） ----------
 
   /** 打开/聚焦番茄作家后台窗口（首次需扫码登录） */

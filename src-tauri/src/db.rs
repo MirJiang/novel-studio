@@ -1487,6 +1487,17 @@ impl Db {
         Ok(n > 0)
     }
 
+    /// 启动恢复：上次退出时还在 running 的任务标记为中断错误
+    pub fn interrupt_running_tasks(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET status = 'error', error = '应用重启，任务中断（可重试，已完成的部分保留）', updated_at = ?1
+             WHERE status = 'running'",
+            params![now()],
+        )?;
+        Ok(())
+    }
+
     /// 清理已完结任务（done/error/cancelled）
     pub fn clear_finished_tasks(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();

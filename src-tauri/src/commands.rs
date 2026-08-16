@@ -464,6 +464,8 @@ const SYSTEM_PROMPT: &str = "你是一位经验丰富的中文网文作家（番
 - 章内结构：开头几句就有抓手（不平铺日常、不回顾前文、不写天气），中段推进剧情/关系/信息，\
 后段让局面变化，章末停在变化发生的那一拍\n\
 - 每场戏都有目标、阻碍、变化；角色一边行动一边给信息，不站原地谈感受\n\
+- 铺垫与回收：留意前情摘要里未回收的伏笔，到位置就呼应回收；本章适度埋设新铺垫\
+（一个细节/一句台词/一件道具），为后文高潮蓄力，不平铺直叙\n\
 - 章末留后劲：新危机/被迫选择/真相一角/关系变化/爽点预告，任选其一；\
 不收在总结句、讲道理或把悬念解释没的解释上\n\
 【语言】\n\
@@ -947,7 +949,7 @@ pub async fn generate_missing_summaries(
 /// 文本只在前端编辑器里），每章写完立即生成摘要，保证下一章的前情摘要链不断；
 /// 进度写 tasks 表，前端轮询展示；取消在下一章开始前生效。
 pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, String> {
-    const MAX_BATCH_CHAPTERS: i64 = 50;
+    const MAX_BATCH_CHAPTERS: i64 = 2000; // 整本书可能上千章；任务可取消，上限只是防呆
     const DEFAULT_CHAPTER_WORDS: i64 = 2000;
 
     #[derive(serde::Deserialize)]
@@ -1066,7 +1068,8 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         let user = format!(
             "{summary_block}{outline_block}{prev_block}\n\n【本章要求】\n本章为《{title}》。\
             自然衔接上文，直接创作本章完整正文，篇幅约 {wpc} 字（不要超过 {max_words} 字）。\
-            章末停在变化发生的那一拍（新危机/被迫选择/真相一角/关系变化/爽点预告），留后劲。"
+            顺应既有伏笔（该回收就回收），适度埋设新铺垫；\
+            章末停在变化发生的那一拍，留后劲。"
         );
 
         let text = llm::chat_once(
