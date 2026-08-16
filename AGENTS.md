@@ -49,7 +49,7 @@ src/
     SettingsView.tsx          设置页（整页非弹窗，左侧分类菜单）：文本模型/封面生图/配音 TTS + 平台账号占位
 src-tauri/src/
   lib.rs                      Tauri 入口：插件注册、DB 初始化、命令注册表
-  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v10）
+  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v12）
   commands.rs                 写作/设定/封面/体检等 #[tauri::command] + prompt 组装 + 注入逻辑
   commands_style.rs           风格库命令：LLM 蒸馏风格卡 + CRUD（样本由用户本地上传）
   commands_publish.rs         发布：番茄/抖音第二窗口 + eval 注入填充（location.hash 回读结果）
@@ -75,7 +75,7 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 2. **任何 AI 输出都要过设定注入**（续写/改写/润色/扩写共用 `build_lore_section`）
 3. **prompt 预算硬顶**：设定 2000 字 / 摘要 1500 字 / 前文尾部 3000 字 / 体检摘要 8000 字 / 大纲 600 字——成本可预测
 4. 注入明细通过 meta 事件对用户可见（崩了能分清"没写设定"还是"没注入"）
-5. 数据库改动走 `user_version` 版本化迁移（当前 v10），禁止直接改老表的 CREATE 语句了事
+5. 数据库改动走 `user_version` 版本化迁移（当前 v12），禁止直接改老表的 CREATE 语句了事
 
 ## 前后端协议
 
@@ -107,6 +107,7 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
   `open_douyin_window` `fill_douyin_caption(video_id)`（抖音上传页填标题+话题；视频文件人工拖入——文件框 JS 设不了）
 - 助手：`assistant_chat(project_id, chapter_id?, messages, channel)`（全书注入流式）
   `assistant_rewrite_chapter(chapter_id, instruction, channel)`（流式预览，前端确认后落库）
+  `locate_rewrite_scope` `rollback_rewrite_task` `scan_banned_words`（跨章改写定位/回滚/合规扫描）
 - AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_draft(idea)` `ai_bootstrap_chat_stream(messages, channel)`（对话式起书流式，[DRAFT] 草稿前端解析）`save_chat_session` `get_latest_chat_session` `list_chat_sessions` `delete_chat_session`（起书会话归档 v11）
 
 ### 设置项 key（settings 表）
@@ -175,8 +176,11 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
   长任务统一走任务队列（tasks.rs worker + tasks 表 + AppRail「任务」面板）
   支持按章数或「写完整本书」（按作品目标总字数推算章数）；
   创建作品（空白/AI 向导）均可设全书目标字数 + 每章字数（projects v7 两列，0=未设置）
-- 写作助手 v1：写作态右下悬浮球 → 右侧抽屉；对话注入设定+全部摘要+大纲+当前章尾部（meta 明细可见）；
-  「改写本章」流式出预览，点「替换原文并更新摘要」才落库（带前后章摘要保连贯，>8000 字引导划词分段）
+- 写作助手：写作态右下悬浮球 → 右侧抽屉；对话注入设定+全部摘要+大纲+当前章尾部（meta 明细可见）；
+  「改写本章」流式出预览，点「替换原文并更新摘要」才落库（带前后章摘要保连贯，>8000 字引导划词分段）；
+  「跨章改写」LLM 按摘要链定位受影响章节 → 勾选确认 → 队列逐章改写（每章先快照 chapter_backups v12，
+  任务面板可整批回滚；改写后自动重生成摘要）
+- 合规扫描：体检页填敏感词 → 纯文本检索命中清单（章节/词/上下文）→ 一键入队整改（复用跨章改写）
 - 写作风格库：AppRail「风格」页，本地 txt/粘贴文本取样本 → LLM 蒸馏风格卡
   （基调/句式/用词/视角/对话/钩子，≤400 字）→ 创建作品时选用；
   注入 AI 续写/批量写章/划词三件套的 system prompt（预算 800 字，meta 明细可见"风格：XXX"）
@@ -185,7 +189,6 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 
 ## 下一步
 
-- 写作页 AI 助手 v2/v3：跨章改写（范围定位→确认→队列跑批→快照回滚）、审核整改模板
 - 全书级内容整改（防审核风险）：跨章敏感内容检测 → 批量定位 → 按指令批量改写
   （如"把涉及 xx 的描写全部替换掉"），严重时支持流程级改写（调大纲 → 受影响章节标记重写）；
   体检已有摘要链 + 报告基础，可在此基础上长
