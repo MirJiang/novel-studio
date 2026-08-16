@@ -28,6 +28,15 @@ function parseWords(s: string): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** 实测一章正文+摘要约 45 秒 */
+const SECONDS_PER_CHAPTER = 45;
+
+function fmtDuration(chapters: number): string {
+  const mins = Math.round((chapters * SECONDS_PER_CHAPTER) / 60);
+  if (mins >= 60) return `约 ${Math.floor(mins / 60)} 小时 ${mins % 60} 分钟`;
+  return `约 ${Math.max(mins, 1)} 分钟`;
+}
+
 /**
  * 批量写章弹层：入队到任务队列，后端 worker 串行执行、逐章落库。
  * 进度来自 App 层的任务轮询——弹层关掉任务照跑，任务面板里也能看到。
@@ -63,7 +72,7 @@ export function BatchWriteDialog({
 
   const start = (wholeBook: boolean) => {
     onStart({
-      chapterCount: wholeBook ? 0 : Math.min(parseWords(count) || 1, 200),
+      chapterCount: wholeBook ? 0 : Math.max(parseWords(count) || 1, 1),
       wordsPerChapter: wpc,
       totalWords: parseWords(totalWords),
       chapterWords: parseWords(chapterWords),
@@ -119,7 +128,7 @@ export function BatchWriteDialog({
           <input
             disabled={running}
             className="w-32 rounded-[10px] bg-canvas px-3 py-2 text-[13px] text-body outline-none placeholder:text-faint focus:bg-surface2 disabled:opacity-50"
-            placeholder="1 ~ 200"
+            placeholder="不封顶"
             inputMode="numeric"
             value={count}
             onChange={(e) => setCount(e.target.value)}
@@ -173,7 +182,7 @@ export function BatchWriteDialog({
                 className="rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
                 onClick={() => start(false)}
               >
-                开始生成 {Math.min(parseWords(count) || 1, 200)} 章
+                开始生成 {Math.max(parseWords(count) || 1, 1)} 章
               </button>
               <button
                 disabled={target <= 0 || remainingChapters <= 0}
@@ -186,6 +195,21 @@ export function BatchWriteDialog({
             </>
           )}
         </div>
+        {!running && (
+          <p className="mt-2 text-[11px] leading-4 text-faint">
+            本次任务：按章数 = {Math.max(parseWords(count) || 1, 1)} 章 ·{" "}
+            {(((Math.max(parseWords(count) || 1, 1)) * wpc) / 10000).toFixed(1)} 万字 ·{" "}
+            {fmtDuration(Math.max(parseWords(count) || 1, 1))}
+            {target > 0 && remainingChapters > 0 && (
+              <>
+                <br />
+                写完整本书 = {remainingChapters} 章 ·{" "}
+                {((remainingChapters * wpc) / 10000).toFixed(1)} 万字 ·{" "}
+                {fmtDuration(remainingChapters)}
+              </>
+            )}
+          </p>
+        )}
         <p className="mt-2 text-[11px] text-faint">
           {running
             ? "任务在队列里后台执行，右下角可查看进度；取消会在当前章写完后停下，已写章节保留"

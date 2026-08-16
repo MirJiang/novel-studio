@@ -949,7 +949,6 @@ pub async fn generate_missing_summaries(
 /// 文本只在前端编辑器里），每章写完立即生成摘要，保证下一章的前情摘要链不断；
 /// 进度写 tasks 表，前端轮询展示；取消在下一章开始前生效。
 pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, String> {
-    const MAX_BATCH_CHAPTERS: i64 = 2000; // 整本书可能上千章；任务可取消，上限只是防呆
     const DEFAULT_CHAPTER_WORDS: i64 = 2000;
 
     #[derive(serde::Deserialize)]
@@ -978,7 +977,7 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
     };
     wpc = wpc.clamp(500, 10000);
 
-    // 章数：参数 <= 0 表示「写完整本书」，按总字数目标推算
+    // 章数：不设上限，参数 <= 0 表示「写完整本书」，按总字数目标推算
     let mut count = payload.chapter_count;
     if count <= 0 {
         if project.target_total_words <= 0 {
@@ -994,7 +993,7 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         }
         count = (remaining + wpc - 1) / wpc;
     }
-    count = count.clamp(1, MAX_BATCH_CHAPTERS);
+    count = count.max(1);
 
     let cfg = load_llm_config(db);
     let base_count = db.chapter_count(project_id).map_err(|e| e.to_string())?;

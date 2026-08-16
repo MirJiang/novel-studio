@@ -102,16 +102,39 @@ pub fn enqueue_batch_chapters(
     {
         return Err("该作品已有批量写章任务在队列中".to_string());
     }
-    let name = db
+    let project = db
         .list_projects()
-        .ok()
-        .and_then(|ps| ps.into_iter().find(|p| p.id == project_id))
-        .map(|p| p.name)
-        .unwrap_or_default();
-    let label = if chapter_count <= 0 {
-        format!("《{name}》写完整本书")
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or("作品不存在")?;
+
+    // 预估章数/字数/时长（实测一章正文+摘要约 45s）
+    let wpc = if words_per_chapter > 0 {
+        words_per_chapter
+    } else if project.target_chapter_words > 0 {
+        project.target_chapter_words
     } else {
-        format!("《{name}》批量写章 ×{chapter_count}")
+        2000
+    };
+    let (count, total_words) = if chapter_count <= 0 {
+        let written = db.total_word_count(project_id).map_err(|e| e.to_string())?;
+        let remaining = (project.target_total_words - written).max(0);
+        ((remaining + wpc - 1) / wpc, remaining)
+    } else {
+        (chapter_count, chapter_count * wpc)
+    };
+    let mins = count * 45 / 60;
+    let duration = if mins >= 60 {
+        format!("约 {} 小时 {} 分钟", mins / 60, mins % 60)
+    } else {
+        format!("约 {} 分钟", mins.max(1))
+    };
+    let wan = format!("{:.1}", total_words as f64 / 10000.0);
+    let label = if chapter_count <= 0 {
+        format!("《{}》写完整本书（约 {count} 章 · {wan} 万字 · {duration}）", project.name)
+    } else {
+        format!("《{}》批量写章 ×{count}（约 {wan} 万字 · {duration}）", project.name)
     };
     let payload = serde_json::json!({
         "chapter_count": chapter_count,
