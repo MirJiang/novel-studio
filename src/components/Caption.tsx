@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import appIcon from "../assets/app-icon.png";
 
 /**
  * 无边框窗口的自制标题栏：左侧品牌 + 面包屑，右侧窗口控制。
@@ -17,14 +18,12 @@ export function Caption({ crumb }: { crumb?: string }) {
           data-tauri-drag-region
           className="flex items-center gap-2.5"
         >
-          <div
-            className="flex h-[19px] w-[19px] items-center justify-center rounded-md text-[11px] font-bold text-white shadow-glow"
-            style={{
-              background: "linear-gradient(135deg,#5B8DEF,#7B61C9)",
-            }}
-          >
-            N
-          </div>
+          <img
+            src={appIcon}
+            alt=""
+            className="h-[20px] w-[20px] rounded-[5px] shadow-glow"
+            draggable={false}
+          />
           <span className="text-[13px] font-semibold text-body">
             Novel Studio
           </span>
