@@ -13,6 +13,9 @@ const FONTS: Record<string, string> = {
   kai: '"Kaiti SC", "KaiTi", "STKaiti", "DFKai-SB", serif',
 };
 
+/** 给设置页预览卡片用 */
+export const FONT_STACKS = FONTS;
+
 let mediaHooked = false;
 
 export async function applyUiPrefs() {

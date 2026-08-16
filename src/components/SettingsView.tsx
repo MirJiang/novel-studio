@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { applyUiPrefs } from "../lib/uiPrefs";
+import { applyUiPrefs, FONT_STACKS } from "../lib/uiPrefs";
 
 interface FieldDef {
   key: string;
@@ -105,6 +105,59 @@ const SECTIONS: SectionDef[] = [
     ],
   },
 ];
+
+/** 主题预览卡：画出该主题的迷你界面（侧栏 + 卡片 + 文本行） */
+function ThemeCard({
+  label,
+  active,
+  onClick,
+  bg,
+  card,
+  text,
+  sub,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  bg: string;
+  card: string;
+  text: string;
+  sub: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-xl bg-canvas p-2.5 text-left transition-shadow ${
+        active ? "shadow-glow ring-2 ring-accent" : "shadow-card hover:shadow-lift"
+      }`}
+    >
+      <div
+        className="flex h-16 gap-1 overflow-hidden rounded-lg p-1.5"
+        style={{ background: bg }}
+      >
+        <div className="flex w-3.5 flex-col gap-1">
+          <div className="h-1.5 w-1.5 rounded-full" style={{ background: card }} />
+          <div className="h-1.5 w-1.5 rounded-full" style={{ background: card }} />
+          <div className="h-1.5 w-1.5 rounded-full" style={{ background: card }} />
+        </div>
+        <div className="flex-1 rounded" style={{ background: card }}>
+          <div className="m-1.5 space-y-1">
+            <div className="h-1 w-3/4 rounded-full" style={{ background: text }} />
+            <div className="h-1 w-full rounded-full" style={{ background: sub }} />
+            <div className="h-1 w-2/3 rounded-full" style={{ background: sub }} />
+            <div
+              className="mt-1 h-2 w-5 rounded-full"
+              style={{ background: "#0a84ff" }}
+            />
+          </div>
+        </div>
+      </div>
+      <span className="mt-1.5 block text-center text-[11px] font-medium text-body">
+        {label}
+      </span>
+    </button>
+  );
+}
 
 /** 设置页：左侧分类菜单 + 右侧对应配置组，不再一滚到底 */
 export function SettingsView() {
@@ -211,47 +264,80 @@ export function SettingsView() {
               <p className="mt-1 text-xs text-muted">即时生效，不用点保存</p>
 
               <p className="mt-5 text-xs font-medium text-muted">主题</p>
-              <div className="mt-1.5 flex w-64 gap-1 rounded-full bg-canvas p-1">
-                {([["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]] as const).map(([v, label]) => (
-                  <button
-                    key={v}
-                    onClick={() => {
-                      setTheme(v);
-                      void applyPref("ui_theme", v);
-                    }}
-                    className={`flex-1 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
-                      theme === v
-                        ? "bg-surface font-semibold text-ink shadow-card"
-                        : "text-muted hover:text-body"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="mt-1.5 grid grid-cols-3 gap-2.5">
+                <ThemeCard
+                  label="浅色"
+                  active={theme === "light"}
+                  onClick={() => {
+                    setTheme("light");
+                    void applyPref("ui_theme", "light");
+                  }}
+                  bg="#f2f3f6"
+                  card="#ffffff"
+                  text="#1c1c1e"
+                  sub="#8e8e93"
+                />
+                <ThemeCard
+                  label="深色"
+                  active={theme === "dark"}
+                  onClick={() => {
+                    setTheme("dark");
+                    void applyPref("ui_theme", "dark");
+                  }}
+                  bg="#161618"
+                  card="#2e2e32"
+                  text="#f2f2f7"
+                  sub="#9c9ca2"
+                />
+                <ThemeCard
+                  label="跟随系统"
+                  active={theme === "system"}
+                  onClick={() => {
+                    setTheme("system");
+                    void applyPref("ui_theme", "system");
+                  }}
+                  bg="linear-gradient(135deg, #f2f3f6 50%, #161618 50%)"
+                  card="#8b8b90"
+                  text="#ffffff"
+                  sub="#e5e5ea"
+                />
               </div>
 
               <p className="mt-5 text-xs font-medium text-muted">编辑器正文字体</p>
-              <div className="mt-1.5 flex w-80 gap-1 rounded-full bg-canvas p-1">
-                {([["serif", "衬线（宋体系）"], ["sans", "黑体"], ["kai", "楷体"]] as const).map(([v, label]) => (
+              <div className="mt-1.5 grid grid-cols-3 gap-2.5">
+                {(
+                  [
+                    ["serif", "衬线", "宋体系，纸感阅读"],
+                    ["sans", "黑体", "屏幕阅读友好"],
+                    ["kai", "楷体", "手写书卷气"],
+                  ] as const
+                ).map(([v, label, desc]) => (
                   <button
                     key={v}
                     onClick={() => {
                       setFont(v);
                       void applyPref("editor_font", v);
                     }}
-                    className={`flex-1 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
-                      font === v
-                        ? "bg-surface font-semibold text-ink shadow-card"
-                        : "text-muted hover:text-body"
+                    className={`rounded-xl bg-canvas p-3 text-left transition-shadow ${
+                      font === v ? "shadow-glow ring-2 ring-accent" : "shadow-card hover:shadow-lift"
                     }`}
                   >
-                    {label}
+                    <span
+                      className="block truncate text-[15px] text-ink"
+                      style={{ fontFamily: FONT_STACKS[v] }}
+                    >
+                      永和九年，岁在癸丑
+                    </span>
+                    <span className="mt-1 block text-[11px] font-semibold text-body">
+                      {label}
+                    </span>
+                    <span className="block text-[10px] text-faint">{desc}</span>
                   </button>
                 ))}
               </div>
 
               <p className="mt-5 text-xs font-medium text-muted">正文字号</p>
-              <div className="mt-1.5 flex w-64 gap-1 rounded-full bg-canvas p-1">
+              <div className="mt-1.5 grid grid-cols-4 gap-2.5">
                 {(["15", "17", "19", "21"] as const).map((v) => (
                   <button
                     key={v}
@@ -259,13 +345,19 @@ export function SettingsView() {
                       setFontSize(v);
                       void applyPref("editor_font_size", v);
                     }}
-                    className={`flex-1 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
+                    className={`rounded-xl bg-canvas p-3 text-center transition-shadow ${
                       fontSize === v
-                        ? "bg-surface font-semibold text-ink shadow-card"
-                        : "text-muted hover:text-body"
+                        ? "shadow-glow ring-2 ring-accent"
+                        : "shadow-card hover:shadow-lift"
                     }`}
                   >
-                    {v}px
+                    <span
+                      className="block text-ink"
+                      style={{ fontSize: `${v}px`, fontFamily: FONT_STACKS[font] }}
+                    >
+                      字
+                    </span>
+                    <span className="mt-1 block text-[10px] text-faint">{v}px</span>
                   </button>
                 ))}
               </div>
