@@ -691,6 +691,24 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// 某章之后所有章的摘要（改写章节时保后续连贯用）
+    pub fn list_summaries_after(
+        &self,
+        project_id: i64,
+        order_index: i64,
+    ) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT title, summary FROM chapters
+             WHERE project_id = ?1 AND order_index > ?2 AND summary != ''
+             ORDER BY order_index ASC",
+        )?;
+        let rows = stmt.query_map(params![project_id, order_index], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// 导出用：整本书的 (标题, 正文)，按章节顺序
     pub fn list_chapter_bodies(&self, project_id: i64) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();

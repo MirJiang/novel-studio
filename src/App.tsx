@@ -17,6 +17,7 @@ import { SettingsView } from "./components/SettingsView";
 import { StylesView } from "./components/StylesView";
 import { Bookshelf } from "./components/Bookshelf";
 import { AICreateWizard } from "./components/AICreateWizard";
+import { AssistantPanel } from "./components/AssistantPanel";
 import {
   BatchWriteDialog,
   type BatchStartOptions,
@@ -46,6 +47,8 @@ export default function App() {
   const [wizardEverOpened, setWizardEverOpened] = useState(false);
   const [wizardEpoch, setWizardEpoch] = useState(0); // 创建成功后 +1 重置对话
   const [wizardFresh, setWizardFresh] = useState(false); // 重置后首挂跳过会话恢复
+  const [assistantOpen, setAssistantOpen] = useState(false); // 写作助手抽屉
+  const [assistantEverOpened, setAssistantEverOpened] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -385,6 +388,28 @@ export default function App() {
     void handleSelectChapter(chapterId, scroll);
   };
 
+  /** 写作助手悬浮球是否可用：写作态（章节/设定/大纲/写作空页）且不在整页路由里 */
+  const assistantVisible =
+    currentProjectId != null &&
+    !settingsOpen &&
+    !stylesOpen &&
+    !tasksOpen &&
+    !wizardOpen &&
+    (view == null ||
+      view.kind === "chapter" ||
+      view.kind === "lore" ||
+      view.kind === "outline");
+
+  /** 改写替换成功：刷新列表 + 重载当前章节（updated_at 变化触发编辑器重挂载） */
+  const handleChapterReplaced = async (chapterId: number) => {
+    if (currentProjectId == null) return;
+    await refreshChapters(currentProjectId);
+    if (view?.kind === "chapter" && view.chapter.id === chapterId) {
+      setView({ kind: "chapter", chapter: await api.getChapter(chapterId) });
+    }
+    showToast("已替换原文并更新摘要");
+  };
+
   // 标题栏面包屑：作品名 / 当前视图
   const currentProject = projects.find((p) => p.id === currentProjectId);
   const viewLabel =
@@ -573,7 +598,7 @@ export default function App() {
             <main className="flex min-w-0 flex-1 flex-col">
               {view?.kind === "chapter" ? (
                 <Editor
-                  key={view.chapter.id}
+                  key={`${view.chapter.id}-${view.chapter.updated_at}`}
                   chapter={view.chapter}
                   onSaved={handleChapterSaved}
                   onOpenBatchWrite={() => setBatchOpen(true)}
@@ -674,7 +699,7 @@ export default function App() {
       {/* 有任务在跑时的悬浮进度条（点击：批量写章→弹层；其他→任务面板） */}
       {runningTask && !batchOpen && !tasksOpen && (
         <button
-          className="fixed bottom-6 right-6 z-40 w-64 rounded-2xl bg-surface p-3.5 text-left shadow-float transition-transform hover:-translate-y-0.5"
+          className="fixed bottom-24 right-6 z-40 w-64 rounded-2xl bg-surface p-3.5 text-left shadow-float transition-transform hover:-translate-y-0.5"
           onClick={() => {
             if (runningTask.kind === "batch_chapters") {
               if (runningTask.project_id !== currentProjectId) {
@@ -709,6 +734,34 @@ export default function App() {
             />
           </div>
         </button>
+      )}
+
+      {/* AI 助手：写作态悬浮球 + 右侧抽屉（常驻挂载不丢对话） */}
+      {assistantVisible && !assistantOpen && (
+        <button
+          className="fixed bottom-6 right-6 z-40 flex h-11 w-11 items-center justify-center rounded-full bg-accent text-surface shadow-glow transition-transform hover:-translate-y-0.5"
+          title="AI 助手（聊剧情/改写本章）"
+          onClick={() => {
+            setAssistantEverOpened(true);
+            setAssistantOpen(true);
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+            <path d="M21 11.5a8.38 8.38 0 0 1-9 8.4 8.5 8.5 0 0 1-3.4-.7L3 21l1.8-5.4a8.38 8.38 0 0 1-.9-4.1 8.5 8.5 0 0 1 8.5-8.5 8.38 8.38 0 0 1 8.6 8.5z" />
+          </svg>
+        </button>
+      )}
+      {assistantEverOpened && (
+        <div className={assistantOpen && assistantVisible ? "" : "hidden"}>
+          <AssistantPanel
+            key={currentProjectId ?? 0}
+            projectId={currentProjectId ?? 0}
+            chapterId={view?.kind === "chapter" ? view.chapter.id : null}
+            chapterTitle={view?.kind === "chapter" ? view.chapter.title : null}
+            onChapterReplaced={(id) => void handleChapterReplaced(id)}
+            onClose={() => setAssistantOpen(false)}
+          />
+        </div>
       )}
 
       {toast && (

@@ -1688,3 +1688,194 @@ pub fn list_chat_sessions(db: State<'_, Db>) -> Result<Vec<db::ChatSession>, Str
 pub fn delete_chat_session(db: State<'_, Db>, id: i64) -> Result<(), String> {
     db.delete_chat_session(id).map_err(|e| e.to_string())
 }
+
+// ---------- 写作助手（悬浮窗） ----------
+
+const ASSISTANT_SYSTEM: &str = "你是这本网文的责编助手，深度掌握本书的设定、剧情进度与大纲。\n\
+铁律：回答必须基于给定资料——设定/摘要/大纲里没写的情节不要编造；\
+答剧情问题时指明出处（哪一章）；给建议要具体可落地（用网文的卖点/钩子/节奏方法论），不说空话。\
+回答用 Markdown，简洁有条理。";
+
+/// 写作助手对话：注入全书上下文（设定 + 全部摘要 + 大纲 + 当前章尾部），流式回复
+#[tauri::command]
+pub async fn assistant_chat(
+    db: State<'_, Db>,
+    project_id: i64,
+    chapter_id: Option<i64>,
+    messages: Vec<ChatMsg>,
+    channel: Channel<StreamEvent>,
+) -> Result<(), String> {
+    if messages.is_empty() {
+        return Err("对话为空".to_string());
+    }
+    let cfg = load_llm_config(&db);
+
+    // 当前章尾部（有打开的章节就带）
+    let chapter_tail = match chapter_id.and_then(|id| db.get_chapter(id).ok()) {
+        Some(c) if c.project_id == project_id => {
+            tail_chars(&db::html_to_text(&c.content), CONTEXT_TAIL_CHARS)
+        }
+        _ => String::new(),
+    };
+
+    // 设定：常驻 + 关键词命中（匹配文本 = 最后一条用户消息 + 当前章尾部）
+    let last_user = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
+    let entries = db.list_lore_entries(project_id).unwrap_or_default();
+    let (lore_section, injected) =
+        build_lore_section(&entries, &format!("{last_user}\n{chapter_tail}"));
+
+    // 全部章节摘要（体检同款预算）
+    let summaries = db
+        .list_summaries_before(project_id, i64::MAX)
+        .unwrap_or_default();
+    let mut summary_section = String::new();
+    for (title, summary) in &summaries {
+        let line = format!("《{title}》{}\n", summary.trim());
+        if summary_section.len() + line.len() > CHECK_SUMMARY_BUDGET {
+            summary_section.push_str("……（更多摘要省略）\n");
+            break;
+        }
+        summary_section.push_str(&line);
+    }
+
+    // 大纲
+    let outline = db.list_outline(project_id).unwrap_or_default();
+    let outline_section = build_outline_section(&outline);
+
+    // 注入明细（可观测性）
+    let mut notes = Vec::new();
+    notes.push(if injected.is_empty() {
+        "未注入设定".to_string()
+    } else {
+        format!("设定：{}", injected.join("、"))
+    });
+    notes.push(format!("摘要 {} 章", summaries.len()));
+    if !outline.is_empty() {
+        notes.push(format!("大纲 {} 节", outline.len()));
+    }
+    if chapter_id.is_some() {
+        notes.push("当前章上下文".to_string());
+    }
+    let _ = channel.send(StreamEvent::Meta {
+        note: notes.join("｜"),
+    });
+
+    let system = if lore_section.is_empty() {
+        ASSISTANT_SYSTEM.to_string()
+    } else {
+        format!("{ASSISTANT_SYSTEM}\n\n【设定资料】\n{lore_section}")
+    };
+
+    // 上下文作为第一条 user 消息，后接对话历史
+    let mut context = String::new();
+    if !summary_section.is_empty() {
+        context.push_str(&format!("【前情摘要】\n{summary_section}\n"));
+    }
+    if !outline_section.is_empty() {
+        context.push_str(&format!("【全书大纲】\n{outline_section}\n"));
+    }
+    if !chapter_tail.is_empty() {
+        context.push_str(&format!("【当前打开章节的结尾】\n{chapter_tail}\n"));
+    }
+    if context.is_empty() {
+        context.push_str("（本书还没有正文，只有设定资料）\n");
+    }
+    context.push_str("以上是本书的资料，请基于它们回答。");
+
+    let mut msgs: Vec<(String, String)> =
+        vec![("system".to_string(), system), ("user".to_string(), context)];
+    for m in messages {
+        let role = if m.role == "assistant" { "assistant" } else { "user" };
+        msgs.push((role.to_string(), m.content));
+    }
+    llm::stream_chat(cfg, msgs, channel)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+const ASSISTANT_REWRITE_SYSTEM: &str = "你是中文网文编辑，按指令改写整章正文。\n\
+保持设定、视角、人称与文风一致；保持与前后章的剧情连贯（前后章摘要已给出，不得与之矛盾）。\n\
+语言硬要求：能用动作不用总结，能用对白不用解释，能写具体不写抽象；对白带身份感。\
+直接输出改写后的全章正文，不要章节标题、不要解释、不要元信息。";
+
+/// 单章改写：流式输出改写后的全文（前端预览确认后才落库）
+#[tauri::command]
+pub async fn assistant_rewrite_chapter(
+    db: State<'_, Db>,
+    chapter_id: i64,
+    instruction: String,
+    channel: Channel<StreamEvent>,
+) -> Result<(), String> {
+    if instruction.trim().is_empty() {
+        return Err("请先写改写要求".to_string());
+    }
+    let chapter = db.get_chapter(chapter_id).map_err(|e| e.to_string())?;
+    let plain = db::html_to_text(&chapter.content);
+    if plain.trim().is_empty() {
+        return Err("该章节还没有内容".to_string());
+    }
+    // 全章改写必须看到全文：超长章引导用划词分段改
+    if plain.chars().count() > 8000 {
+        return Err("章节超过 8000 字，整章改写会丢失细节，建议用划词改写分段处理".to_string());
+    }
+    let cfg = load_llm_config(&db);
+
+    let before = db
+        .list_summaries_before(chapter.project_id, chapter.order_index)
+        .unwrap_or_default();
+    let after = db
+        .list_summaries_after(chapter.project_id, chapter.order_index)
+        .unwrap_or_default();
+    let before_text = before
+        .iter()
+        .map(|(t, s)| format!("《{t}》{}", s.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let after_text = after
+        .iter()
+        .map(|(t, s)| format!("《{t}》{}", s.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let _ = channel.send(StreamEvent::Meta {
+        note: format!(
+            "改写《{}》｜前情摘要 {} 章｜后续摘要 {} 章",
+            chapter.title,
+            before.len(),
+            after.len()
+        ),
+    });
+
+    let user = format!(
+        "{}{}【改写要求】\n{}\n\n【《{}》原文】\n{}",
+        if before_text.is_empty() {
+            String::new()
+        } else {
+            format!("【前文摘要】\n{before_text}\n\n")
+        },
+        if after_text.is_empty() {
+            String::new()
+        } else {
+            format!("【后续章节摘要】（改写不得与之矛盾）\n{after_text}\n\n")
+        },
+        instruction.trim(),
+        chapter.title,
+        plain
+    );
+
+    llm::stream_chat(
+        cfg,
+        vec![
+            ("system".to_string(), ASSISTANT_REWRITE_SYSTEM.to_string()),
+            ("user".to_string(), user),
+        ],
+        channel,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}

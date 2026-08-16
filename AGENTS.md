@@ -44,6 +44,8 @@ src/
     StylesView.tsx            风格库（整页全局）：本地 txt/粘贴文本 → 蒸馏风格卡 → 应用到作品
     PublishView.tsx           发布页：章节→番茄后台填充；视频→抖音创作者中心填文案（均 fill-only，发布人工点）
     TasksView.tsx             任务面板：队列/进度/取消/重试/清理（批量写章、镜头视频等长任务）
+    AssistantPanel.tsx        写作助手：右侧抽屉（写作态右下悬浮球），聊书 + 单章改写预览确认
+    Markdown.tsx              共享 AI 消息 Markdown 渲染（起书向导/助手共用）
     SettingsView.tsx          设置页（整页非弹窗，左侧分类菜单）：文本模型/封面生图/配音 TTS + 平台账号占位
 src-tauri/src/
   lib.rs                      Tauri 入口：插件注册、DB 初始化、命令注册表
@@ -103,6 +105,8 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 - 风格库：`distill_style(name, source, sample_text)` `list_styles` `delete_style` `set_project_style(project_id, style_id)`
 - 发布：`open_fanqie_window` `fill_chapter_draft(chapter_id)`（番茄章节，只填不发布）
   `open_douyin_window` `fill_douyin_caption(video_id)`（抖音上传页填标题+话题；视频文件人工拖入——文件框 JS 设不了）
+- 助手：`assistant_chat(project_id, chapter_id?, messages, channel)`（全书注入流式）
+  `assistant_rewrite_chapter(chapter_id, instruction, channel)`（流式预览，前端确认后落库）
 - AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_draft(idea)` `ai_bootstrap_chat_stream(messages, channel)`（对话式起书流式，[DRAFT] 草稿前端解析）`save_chat_session` `get_latest_chat_session` `list_chat_sessions` `delete_chat_session`（起书会话归档 v11）
 
 ### 设置项 key（settings 表）
@@ -171,6 +175,8 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
   长任务统一走任务队列（tasks.rs worker + tasks 表 + AppRail「任务」面板）
   支持按章数或「写完整本书」（按作品目标总字数推算章数）；
   创建作品（空白/AI 向导）均可设全书目标字数 + 每章字数（projects v7 两列，0=未设置）
+- 写作助手 v1：写作态右下悬浮球 → 右侧抽屉；对话注入设定+全部摘要+大纲+当前章尾部（meta 明细可见）；
+  「改写本章」流式出预览，点「替换原文并更新摘要」才落库（带前后章摘要保连贯，>8000 字引导划词分段）
 - 写作风格库：AppRail「风格」页，本地 txt/粘贴文本取样本 → LLM 蒸馏风格卡
   （基调/句式/用词/视角/对话/钩子，≤400 字）→ 创建作品时选用；
   注入 AI 续写/批量写章/划词三件套的 system prompt（预算 800 字，meta 明细可见"风格：XXX"）
@@ -179,9 +185,7 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 
 ## 下一步
 
-- 写作页 AI 助手悬浮窗：整本书级别的对话助手（续写/改写/改内容/聊剧情走向），
-  上下文走设定库+摘要链+大纲注入（复用现有注入链）；改写类指令必须保证章节剧情连贯
-  （定位受影响章节 → 逐章改 → 同步更新摘要与大纲标记）；可作为「全书级内容整改」的交互入口
+- 写作页 AI 助手 v2/v3：跨章改写（范围定位→确认→队列跑批→快照回滚）、审核整改模板
 - 全书级内容整改（防审核风险）：跨章敏感内容检测 → 批量定位 → 按指令批量改写
   （如"把涉及 xx 的描写全部替换掉"），严重时支持流程级改写（调大纲 → 受影响章节标记重写）；
   体检已有摘要链 + 报告基础，可在此基础上长

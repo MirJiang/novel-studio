@@ -425,6 +425,36 @@ export const api = {
     return invoke<void>("ai_bootstrap_chat_stream", { messages, channel });
   },
 
+  // ---------- 写作助手（悬浮窗） ----------
+
+  /** 助手对话（全书上下文注入，流式） */
+  assistantChat: (
+    projectId: number,
+    chapterId: number | null,
+    messages: ChatMsg[],
+    onEvent: (event: StreamEvent) => void
+  ) => {
+    const channel = new Channel<StreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("assistant_chat", { projectId, chapterId, messages, channel });
+  },
+
+  /** 单章改写（流式出预览全文，确认后才落库） */
+  assistantRewriteChapter: (
+    chapterId: number,
+    instruction: string,
+    onEvent: (event: StreamEvent) => void
+  ) => {
+    const channel = new Channel<StreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("assistant_rewrite_chapter", {
+      chapterId,
+      instruction,
+      channel,
+    });
+  },
+  // ---------- 起书会话归档 ----------
+
   /** 保存起书会话（id=null 新建），返回会话 id */
   saveChatSession: (
     id: number | null,

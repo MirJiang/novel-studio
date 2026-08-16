@@ -80,6 +80,8 @@ pub fn run() {
             commands::get_latest_chat_session,
             commands::list_chat_sessions,
             commands::delete_chat_session,
+            commands::assistant_chat,
+            commands::assistant_rewrite_chapter,
             commands::ai_polish_idea,
             commands_style::distill_style,
             commands_style::list_styles,
