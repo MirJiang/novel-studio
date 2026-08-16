@@ -1815,16 +1815,49 @@ pub async fn assistant_rewrite_chapter(
         return Err("请先写改写要求".to_string());
     }
     let chapter = db.get_chapter(chapter_id).map_err(|e| e.to_string())?;
+    let user = build_rewrite_user(&db, &chapter, &instruction)?;
+    let cfg = load_llm_config(&db);
+
+    let before = db
+        .list_summaries_before(chapter.project_id, chapter.order_index)
+        .unwrap_or_default();
+    let after = db
+        .list_summaries_after(chapter.project_id, chapter.order_index)
+        .unwrap_or_default();
+    let _ = channel.send(StreamEvent::Meta {
+        note: format!(
+            "改写《{}》｜前情摘要 {} 章｜后续摘要 {} 章",
+            chapter.title,
+            before.len(),
+            after.len()
+        ),
+    });
+
+    llm::stream_chat(
+        cfg,
+        vec![
+            ("system".to_string(), ASSISTANT_REWRITE_SYSTEM.to_string()),
+            ("user".to_string(), user),
+        ],
+        channel,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// 改写 user 消息：前后章摘要 + 改写要求 + 全章原文（单章/批量共用）
+fn build_rewrite_user(db: &Db, chapter: &Chapter, instruction: &str) -> Result<String, String> {
     let plain = db::html_to_text(&chapter.content);
     if plain.trim().is_empty() {
-        return Err("该章节还没有内容".to_string());
+        return Err(format!("《{}》还没有内容", chapter.title));
     }
     // 全章改写必须看到全文：超长章引导用划词分段改
     if plain.chars().count() > 8000 {
-        return Err("章节超过 8000 字，整章改写会丢失细节，建议用划词改写分段处理".to_string());
+        return Err(format!(
+            "《{}》超过 8000 字，整章改写会丢失细节，建议划词分段处理",
+            chapter.title
+        ));
     }
-    let cfg = load_llm_config(&db);
-
     let before = db
         .list_summaries_before(chapter.project_id, chapter.order_index)
         .unwrap_or_default();
@@ -1841,17 +1874,7 @@ pub async fn assistant_rewrite_chapter(
         .map(|(t, s)| format!("《{t}》{}", s.trim()))
         .collect::<Vec<_>>()
         .join("\n");
-
-    let _ = channel.send(StreamEvent::Meta {
-        note: format!(
-            "改写《{}》｜前情摘要 {} 章｜后续摘要 {} 章",
-            chapter.title,
-            before.len(),
-            after.len()
-        ),
-    });
-
-    let user = format!(
+    Ok(format!(
         "{}{}【改写要求】\n{}\n\n【《{}》原文】\n{}",
         if before_text.is_empty() {
             String::new()
@@ -1866,16 +1889,226 @@ pub async fn assistant_rewrite_chapter(
         instruction.trim(),
         chapter.title,
         plain
-    );
+    ))
+}
 
-    llm::stream_chat(
+// ---------- 跨章改写（范围定位 → 确认 → 队列跑批 → 可回滚） ----------
+
+#[derive(Debug, Serialize)]
+pub struct ScopeItem {
+    pub chapter_id: i64,
+    pub title: String,
+    pub reason: String,
+}
+
+/// LLM 按摘要链定位受改写指令影响的章节
+#[tauri::command]
+pub async fn locate_rewrite_scope(
+    db: State<'_, Db>,
+    project_id: i64,
+    instruction: String,
+) -> Result<Vec<ScopeItem>, String> {
+    if instruction.trim().is_empty() {
+        return Err("请先写改写要求".to_string());
+    }
+    let summaries = db
+        .list_summaries_with_id(project_id)
+        .map_err(|e| e.to_string())?;
+    if summaries.is_empty() {
+        return Err("还没有章节摘要，先在体检页补齐摘要".to_string());
+    }
+    let mut section = String::new();
+    for (id, title, summary) in &summaries {
+        let line = format!("[{id}]《{title}》{}\n", summary.trim());
+        if section.len() + line.len() > CHECK_SUMMARY_BUDGET {
+            section.push_str("……（更多摘要省略）\n");
+            break;
+        }
+        section.push_str(&line);
+    }
+    let cfg = load_llm_config(&db);
+    let raw = llm::chat_once(
         cfg,
         vec![
-            ("system".to_string(), ASSISTANT_REWRITE_SYSTEM.to_string()),
-            ("user".to_string(), user),
+            (
+                "system".to_string(),
+                "你是小说责编。用户要对全书做一次批量改写。根据各章摘要，判断哪些章节需要改动。\
+                只输出 JSON 数组：[{\"chapter_id\": 章节id（数字）, \"reason\": \"为什么需要改，20字内\"}…]。\
+                只收真正受影响的章节，宁缺毋滥；没有受影响的就输出 []。不要输出其他内容。"
+                    .to_string(),
+            ),
+            (
+                "user".to_string(),
+                format!("【改写要求】\n{}\n\n【各章摘要】\n{}", instruction.trim(), section),
+            ),
         ],
-        channel,
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    let start = raw.find('[').ok_or("定位结果不是 JSON 数组")?;
+    let end = raw.rfind(']').ok_or("定位结果不是 JSON 数组")?;
+    #[derive(Deserialize)]
+    struct RawItem {
+        chapter_id: i64,
+        reason: String,
+    }
+    let raw_items: Vec<RawItem> = serde_json::from_str(&raw[start..=end])
+        .map_err(|e| format!("定位结果解析失败: {e}"))?;
+    let title_of = |cid: i64| {
+        summaries
+            .iter()
+            .find(|(id, _, _)| *id == cid)
+            .map(|(_, t, _)| t.clone())
+    };
+    Ok(raw_items
+        .into_iter()
+        .filter_map(|r| {
+            title_of(r.chapter_id).map(|title| ScopeItem {
+                chapter_id: r.chapter_id,
+                title,
+                reason: r.reason,
+            })
+        })
+        .collect())
+}
+
+/// 跨章改写执行器（任务队列 kind = rewrite_chapters）：
+/// 每章先快照（可回滚），再整章改写落库并重生成摘要（摘要链不断）
+pub(crate) async fn run_rewrite_chapters(db: &Db, task: &Task) -> Result<TaskEnd, String> {
+    #[derive(Deserialize)]
+    struct Payload {
+        chapter_ids: Vec<i64>,
+        instruction: String,
+    }
+    let payload: Payload = serde_json::from_str(&task.payload)
+        .map_err(|e| format!("任务参数解析失败: {e}"))?;
+    let total = payload.chapter_ids.len() as i64;
+    if total == 0 {
+        return Err("没有要改写的章节".to_string());
+    }
+    let cfg = load_llm_config(db);
+    let mut done = 0i64;
+    let mut skipped: Vec<String> = Vec::new();
+
+    for (i, cid) in payload.chapter_ids.iter().enumerate() {
+        if crate::tasks::is_cancel_requested(task.id) {
+            return Ok(TaskEnd::Cancelled(format!(
+                "已改写 {done} 章（已取消，快照可回滚）"
+            )));
+        }
+        let chapter = db.get_chapter(*cid).map_err(|e| e.to_string())?;
+        let _ = db.update_task_progress(task.id, i as i64, total, &chapter.title);
+
+        // 先快照，再改写——回滚的数据基础
+        db.backup_chapter(task.id, *cid).map_err(|e| e.to_string())?;
+
+        let user = match build_rewrite_user(db, &chapter, &payload.instruction) {
+            Ok(u) => u,
+            Err(e) => {
+                skipped.push(format!("《{}》（{e}）", chapter.title));
+                continue;
+            }
+        };
+        let text = llm::chat_once(
+            cfg.clone(),
+            vec![
+                ("system".to_string(), ASSISTANT_REWRITE_SYSTEM.to_string()),
+                ("user".to_string(), user),
+            ],
+        )
+        .await
+        .map_err(|e| format!("《{}》改写失败（已完成 {done} 章）: {e}", chapter.title))?;
+
+        db.save_chapter(*cid, &chapter.title, &text_to_html(&text))
+            .map_err(|e| e.to_string())?;
+        // 摘要联动：改写后重生成，保证后续章节的摘要链不断
+        let plain = db::html_to_text(&text_to_html(&text));
+        if let Ok(summary) = summarize_chapter_text(&cfg, &chapter.title, &plain).await {
+            let _ = db.save_summary(*cid, &summary);
+        }
+        done += 1;
+    }
+
+    let mut msg = format!("已改写 {done} 章");
+    if !skipped.is_empty() {
+        msg.push_str(&format!("，跳过 {} 章（{}）", skipped.len(), skipped.join("、")));
+    }
+    msg.push_str("，快照已存，可在任务面板回滚");
+    let _ = db.update_task_progress(task.id, done, total, "完成");
+    Ok(TaskEnd::Done(msg))
+}
+
+/// 回滚：把任务快照的章节恢复到改写前状态
+#[tauri::command]
+pub fn rollback_rewrite_task(db: State<'_, Db>, task_id: i64) -> Result<String, String> {
+    let backups = db.list_backups(task_id).map_err(|e| e.to_string())?;
+    if backups.is_empty() {
+        return Err("该任务没有可回滚的快照".to_string());
+    }
+    let n = backups.len();
+    for (chapter_id, title, content, summary) in &backups {
+        db.save_chapter(*chapter_id, title, content)
+            .map_err(|e| e.to_string())?;
+        db.save_summary(*chapter_id, summary)
+            .map_err(|e| e.to_string())?;
+    }
+    db.delete_backups(task_id).map_err(|e| e.to_string())?;
+    Ok(format!("已回滚 {n} 章到改写前状态"))
+}
+
+// ---------- 合规扫描（敏感词，纯文本检索不调 LLM） ----------
+
+#[derive(Debug, Serialize)]
+pub struct ScanHit {
+    pub chapter_id: i64,
+    pub title: String,
+    pub word: String,
+    pub context: String,
+}
+
+#[tauri::command]
+pub fn scan_banned_words(
+    db: State<'_, Db>,
+    project_id: i64,
+    words: Vec<String>,
+) -> Result<Vec<ScanHit>, String> {
+    let words: Vec<String> = words
+        .into_iter()
+        .map(|w| w.trim().to_string())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.is_empty() {
+        return Err("请先填要扫描的敏感词".to_string());
+    }
+    let bodies = db.list_chapter_bodies(project_id).map_err(|e| e.to_string())?;
+    // 需要 chapter_id，改用 chapters 全量查询
+    let metas = db.list_chapters(project_id).map_err(|e| e.to_string())?;
+    let mut hits = Vec::new();
+    for (m, (_, content_html)) in metas.iter().zip(bodies.iter()) {
+        let plain = db::html_to_text(content_html);
+        let chars: Vec<char> = plain.chars().collect();
+        for w in &words {
+            let mut from = 0usize;
+            while let Some(pos) = plain.get(from..).and_then(|s| s.find(w.as_str())) {
+                let abs = from + pos;
+                // 前后各取 20 字当上下文
+                let char_pos = plain[..abs].chars().count();
+                let start = char_pos.saturating_sub(20);
+                let end = (char_pos + w.chars().count() + 20).min(chars.len());
+                let ctx: String = chars[start..end].iter().collect();
+                hits.push(ScanHit {
+                    chapter_id: m.id,
+                    title: m.title.clone(),
+                    word: w.clone(),
+                    context: format!("…{}…", ctx.replace('\n', " ")),
+                });
+                if hits.len() >= 200 {
+                    return Ok(hits); // 防爆：最多 200 条
+                }
+                from = abs + w.len();
+            }
+        }
+    }
+    Ok(hits)
 }

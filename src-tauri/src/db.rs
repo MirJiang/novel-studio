@@ -432,6 +432,23 @@ impl Db {
             .context("迁移 v11 失败")?;
         }
         conn.pragma_update(None, "user_version", 11)?;
+        // v12：跨章改写的章节快照（可整批回滚）
+        if version < 12 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS chapter_backups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER NOT NULL,
+                    chapter_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_backups_task ON chapter_backups(task_id);",
+            )
+            .context("迁移 v12 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 12)?;
         Ok(())
     }
 
@@ -705,6 +722,19 @@ impl Db {
         )?;
         let rows = stmt.query_map(params![project_id, order_index], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 全书章节摘要（带章节 id，跨章改写定位影响范围用）
+    pub fn list_summaries_with_id(&self, project_id: i64) -> Result<Vec<(i64, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, summary FROM chapters
+             WHERE project_id = ?1 AND summary != '' ORDER BY order_index ASC",
+        )?;
+        let rows = stmt.query_map(params![project_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -1534,6 +1564,42 @@ impl Db {
     pub fn delete_chat_session(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM chat_sessions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    // ---------- 跨章改写快照 ----------
+
+    /// 改写前备份章节现状（标题/正文/摘要）
+    pub fn backup_chapter(&self, task_id: i64, chapter_id: i64) -> Result<()> {
+        let ch = self.get_chapter(chapter_id)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO chapter_backups (task_id, chapter_id, title, content, summary, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![task_id, chapter_id, ch.title, ch.content, ch.summary, now()],
+        )?;
+        Ok(())
+    }
+
+    /// 任务的快照列表：(chapter_id, title, content, summary)
+    pub fn list_backups(&self, task_id: i64) -> Result<Vec<(i64, String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT chapter_id, title, content, summary FROM chapter_backups
+             WHERE task_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![task_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete_backups(&self, task_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM chapter_backups WHERE task_id = ?1",
+            params![task_id],
+        )?;
         Ok(())
     }
 }

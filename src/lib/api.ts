@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BootstrapChatReply, BootstrapDraft, Chapter, ChapterMeta, ChatMsg, ChatSession, CheckReportMeta, LoreEntry, OutlineItem, Project, Style, Task, Video, VideoDetail } from "../types";
+import type { BootstrapChatReply, BootstrapDraft, Chapter, ChapterMeta, ChatMsg, ChatSession, CheckReportMeta, LoreEntry, OutlineItem, Project, ScanHit, ScopeItem, Style, Task, Video, VideoDetail } from "../types";
 
 /** 无边框窗口的自制标题栏控制 */
 const appWindow = getCurrentWindow();
@@ -453,6 +453,26 @@ export const api = {
       channel,
     });
   },
+
+  /** 跨章改写：LLM 按摘要链定位受影响章节 */
+  locateRewriteScope: (projectId: number, instruction: string) =>
+    invoke<ScopeItem[]>("locate_rewrite_scope", { projectId, instruction }),
+
+  /** 跨章改写入队（逐章快照，可回滚） */
+  enqueueRewriteChapters: (
+    projectId: number,
+    chapterIds: number[],
+    instruction: string
+  ) =>
+    invoke<Task>("enqueue_rewrite_chapters", { projectId, chapterIds, instruction }),
+
+  /** 回滚跨章改写（恢复快照），返回结果说明 */
+  rollbackRewriteTask: (taskId: number) =>
+    invoke<string>("rollback_rewrite_task", { taskId }),
+
+  /** 敏感词合规扫描（纯文本检索） */
+  scanBannedWords: (projectId: number, words: string[]) =>
+    invoke<ScanHit[]>("scan_banned_words", { projectId, words }),
   // ---------- 起书会话归档 ----------
 
   /** 保存起书会话（id=null 新建），返回会话 id */

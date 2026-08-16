@@ -74,6 +74,7 @@ async fn run_task(app: &AppHandle, db: &Db, task: &Task) -> Result<TaskEnd, Stri
     match task.kind.as_str() {
         "batch_chapters" => crate::commands::run_batch_chapters(db, task).await,
         "video_shots" => crate::commands_video::run_video_shots(app, db, task).await,
+        "rewrite_chapters" => crate::commands::run_rewrite_chapters(db, task).await,
         other => Err(format!("未知任务类型: {other}")),
     }
 }
@@ -131,6 +132,42 @@ pub fn enqueue_video_shots(db: State<'_, Db>, video_id: i64) -> Result<Task, Str
     let payload = serde_json::json!({ "video_id": video_id }).to_string();
     let task = db
         .create_task(video.project_id, "video_shots", &label, &payload)
+        .map_err(|e| e.to_string())?;
+    notify().notify_one();
+    Ok(task)
+}
+
+/// 跨章改写入队（快照在 worker 里逐章备份，可回滚）
+#[tauri::command]
+pub fn enqueue_rewrite_chapters(
+    db: State<'_, Db>,
+    project_id: i64,
+    chapter_ids: Vec<i64>,
+    instruction: String,
+) -> Result<Task, String> {
+    if chapter_ids.is_empty() {
+        return Err("没有选中要改写的章节".to_string());
+    }
+    if db
+        .has_active_task(project_id, "rewrite_chapters")
+        .map_err(|e| e.to_string())?
+    {
+        return Err("该作品已有跨章改写任务在队列中".to_string());
+    }
+    let name = db
+        .list_projects()
+        .ok()
+        .and_then(|ps| ps.into_iter().find(|p| p.id == project_id))
+        .map(|p| p.name)
+        .unwrap_or_default();
+    let label = format!("《{}》跨章改写 ×{}", name, chapter_ids.len());
+    let payload = serde_json::json!({
+        "chapter_ids": chapter_ids,
+        "instruction": instruction.trim(),
+    })
+    .to_string();
+    let task = db
+        .create_task(project_id, "rewrite_chapters", &label, &payload)
         .map_err(|e| e.to_string())?;
     notify().notify_one();
     Ok(task)

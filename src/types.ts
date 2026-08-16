@@ -114,6 +114,21 @@ export interface ChatMsg {
   content: string;
 }
 
+/** 跨章改写的受影响章节项 */
+export interface ScopeItem {
+  chapter_id: number;
+  title: string;
+  reason: string;
+}
+
+/** 合规扫描命中项 */
+export interface ScanHit {
+  chapter_id: number;
+  title: string;
+  word: string;
+  context: string;
+}
+
 /** AI 起书会话归档 */
 export interface ChatSession {
   id: number;

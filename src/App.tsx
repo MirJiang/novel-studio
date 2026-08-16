@@ -545,7 +545,11 @@ export default function App() {
           <TasksView
             tasks={tasks}
             projects={projects}
-            onChanged={() => void pollTasks()}
+            onChanged={() => {
+              void pollTasks();
+              // 回滚/重试后章节内容可能变了
+              if (currentProjectId != null) void refreshChapters(currentProjectId);
+            }}
             onToast={showToast}
           />
         ) : stylesOpen ? (

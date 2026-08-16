@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
-import type { CheckReportMeta } from "../types";
+import type { CheckReportMeta, ScanHit } from "../types";
 
 interface CheckViewProps {
   projectId: number;
@@ -26,6 +26,12 @@ export function CheckView({ projectId }: CheckViewProps) {
   const [reports, setReports] = useState<CheckReportMeta[]>([]);
   const [viewingId, setViewingId] = useState<number | null>(null);
 
+  // 合规扫描
+  const [wordsText, setWordsText] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [hits, setHits] = useState<ScanHit[] | null>(null);
+  const [scanMsg, setScanMsg] = useState<string | null>(null);
+
   const refresh = useCallback(async () => {
     try {
       setStats(await api.summaryStats(projectId));
@@ -37,7 +43,51 @@ export function CheckView({ projectId }: CheckViewProps) {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void api.getSetting("banned_words").then((v) => {
+      if (v) setWordsText(v);
+    });
+  }, [refresh, projectId]);
+
+  // ---------- 合规扫描 ----------
+
+  const runScan = async () => {
+    const words = wordsText
+      .split(/[,，\n]/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+    if (words.length === 0 || scanning) return;
+    setScanning(true);
+    setError(null);
+    setScanMsg(null);
+    setHits(null);
+    try {
+      await api.setSetting("banned_words", wordsText);
+      const result = await api.scanBannedWords(projectId, words);
+      setHits(result);
+      if (result.length === 0) setScanMsg("未发现敏感内容");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  /** 把命中章节打包成跨章改写任务 */
+  const enqueueFix = async () => {
+    if (!hits || hits.length === 0) return;
+    const ids = [...new Set(hits.map((h) => h.chapter_id))];
+    const words = [...new Set(hits.map((h) => h.word))];
+    const instruction = `以下章节含有敏感内容（${words.join("、")}）。\
+请把这些描写改写成合规表达：弱化或替换直白表述，保持剧情走向、人物关系和本章节奏不变，\
+不与前后章摘要矛盾。`;
+    try {
+      await api.enqueueRewriteChapters(projectId, ids, instruction);
+      setScanMsg(`已入队整改 ${ids.length} 章（任务页看进度，可回滚）`);
+      setHits(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const [total, withSummary] = stats ?? [0, 0];
   const missing = total - withSummary;
@@ -155,6 +205,52 @@ export function CheckView({ projectId }: CheckViewProps) {
           >
             {checking ? "体检中…" : "开始体检"}
           </button>
+
+          {/* 合规扫描 */}
+          <div className="mt-5 border-t border-line pt-4">
+            <p className="text-xs font-semibold text-muted">合规扫描</p>
+            <textarea
+              className="mt-2 h-16 w-full resize-none rounded-[10px] bg-white/60 px-3 py-2 text-xs leading-5 shadow-card outline-none placeholder:text-faint focus:bg-surface"
+              placeholder="敏感词，逗号或换行分隔，如：赌博, 黑帮"
+              value={wordsText}
+              onChange={(e) => setWordsText(e.target.value)}
+            />
+            <button
+              disabled={busy || scanning || !wordsText.trim()}
+              onClick={() => void runScan()}
+              className="mt-2 w-full rounded-full bg-white/70 px-3 py-1.5 text-sm text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+            >
+              {scanning ? "扫描中…" : "扫描敏感内容"}
+            </button>
+            {scanMsg && (
+              <p className="mt-2 text-xs leading-5 text-pgreen-t">{scanMsg}</p>
+            )}
+            {hits && hits.length > 0 && (
+              <div className="mt-2">
+                <p className="text-[11px] text-muted">
+                  命中 {hits.length} 处 · 涉及{" "}
+                  {new Set(hits.map((h) => h.chapter_id)).size} 章
+                </p>
+                <div className="mt-1.5 max-h-44 overflow-y-auto">
+                  {hits.map((h, i) => (
+                    <div key={i} className="rounded-lg bg-white/60 px-2.5 py-1.5 text-[11px] leading-4 text-muted shadow-card">
+                      <span className="font-medium text-body">{h.title}</span>
+                      <span className="mx-1 rounded bg-pred px-1 py-px text-[10px] text-pred-t">
+                        {h.word}
+                      </span>
+                      <span className="text-faint">{h.context}</span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => void enqueueFix()}
+                  className="mt-2 w-full rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
+                >
+                  入队整改这些章节（可回滚）
+                </button>
+              </div>
+            )}
+          </div>
 
           {batchProgress && (
             <div className="mt-4">

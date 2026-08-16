@@ -11,6 +11,7 @@ interface TasksViewProps {
 const KIND_LABEL: Record<string, string> = {
   batch_chapters: "批量写章",
   video_shots: "镜头视频",
+  rewrite_chapters: "跨章改写",
 };
 
 const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
@@ -93,14 +94,29 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
                       取消
                     </button>
                   ) : (
-                    <button
-                      className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
-                      onClick={() =>
-                        void act(() => api.retryTask(t.id), "已重新入队")
-                      }
-                    >
-                      重试
-                    </button>
+                    <>
+                      {t.kind === "rewrite_chapters" && t.status === "done" && (
+                        <button
+                          className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-pyellow-t shadow-card transition-colors hover:bg-surface"
+                          onClick={() =>
+                            void act(
+                              () => api.rollbackRewriteTask(t.id),
+                              "已回滚到改写前状态"
+                            )
+                          }
+                        >
+                          回滚
+                        </button>
+                      )}
+                      <button
+                        className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                        onClick={() =>
+                          void act(() => api.retryTask(t.id), "已重新入队")
+                        }
+                      >
+                        重试
+                      </button>
+                    </>
                   )}
                 </div>
                 {t.status === "running" && (

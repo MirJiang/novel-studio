@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { AiMarkdown } from "./Markdown";
-import type { ChatMsg } from "../types";
+import type { ChatMsg, ScopeItem } from "../types";
 
 interface AssistantPanelProps {
   projectId: number;
@@ -46,6 +46,14 @@ export function AssistantPanel({
   const [preview, setPreview] = useState<string | null>(null);
   const [rewriting, setRewriting] = useState(false);
   const [applying, setApplying] = useState(false);
+
+  // 跨章改写状态
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [scopeInstr, setScopeInstr] = useState("");
+  const [scopeBusy, setScopeBusy] = useState(false);
+  const [scopeItems, setScopeItems] = useState<ScopeItem[] | null>(null);
+  const [scopeChecked, setScopeChecked] = useState<Set<number>>(new Set());
+  const [info, setInfo] = useState<string | null>(null);
 
   const chatRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -135,6 +143,42 @@ export function AssistantPanel({
       setError(String(e));
     } finally {
       setApplying(false);
+    }
+  };
+
+  /** 定位影响范围 */
+  const locateScope = async () => {
+    if (scopeBusy || !scopeInstr.trim()) return;
+    setScopeBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const items = await api.locateRewriteScope(projectId, scopeInstr.trim());
+      setScopeItems(items);
+      setScopeChecked(new Set(items.map((i) => i.chapter_id)));
+      if (items.length === 0) setInfo("AI 判断没有章节受影响——可以换个说法再定位");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setScopeBusy(false);
+    }
+  };
+
+  /** 确认范围后入队（快照/进度/取消都在任务队列里） */
+  const enqueueScope = async () => {
+    if (scopeChecked.size === 0) return;
+    try {
+      await api.enqueueRewriteChapters(
+        projectId,
+        [...scopeChecked],
+        scopeInstr.trim()
+      );
+      setInfo(`已入队，将改写 ${scopeChecked.size} 章（任务页可看进度/回滚）`);
+      setScopeItems(null);
+      setScopeInstr("");
+      setScopeOpen(false);
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -247,6 +291,79 @@ export function AssistantPanel({
       {error && (
         <p className="shrink-0 px-4 pb-2 text-xs leading-5 text-pred-t">{error}</p>
       )}
+      {info && (
+        <p className="shrink-0 px-4 pb-2 text-xs leading-5 text-pgreen-t">{info}</p>
+      )}
+
+      {/* 跨章改写区 */}
+      {scopeOpen && (
+        <div className="flex max-h-[45%] shrink-0 flex-col border-t border-line p-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-muted">跨章改写</span>
+            <button
+              className="ml-auto text-faint hover:text-body"
+              onClick={() => setScopeOpen(false)}
+            >
+              ✕
+            </button>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <input
+              className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+              placeholder="如：把金手指从系统改成血脉"
+              value={scopeInstr}
+              disabled={scopeBusy}
+              onChange={(e) => setScopeInstr(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void locateScope()}
+            />
+            <button
+              disabled={scopeBusy || !scopeInstr.trim()}
+              onClick={() => void locateScope()}
+              className="shrink-0 rounded-full bg-accent px-3.5 py-2 text-xs font-semibold text-surface shadow-glow hover:bg-accent-h disabled:opacity-40"
+            >
+              {scopeBusy ? "定位中…" : "定位影响范围"}
+            </button>
+          </div>
+          {scopeItems != null && scopeItems.length > 0 && (
+            <>
+              <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+                {scopeItems.map((it) => (
+                  <label
+                    key={it.chapter_id}
+                    className="flex cursor-pointer items-center gap-2 py-1 text-[13px] text-body"
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-[#007AFF]"
+                      checked={scopeChecked.has(it.chapter_id)}
+                      onChange={(e) => {
+                        const next = new Set(scopeChecked);
+                        if (e.target.checked) next.add(it.chapter_id);
+                        else next.delete(it.chapter_id);
+                        setScopeChecked(next);
+                      }}
+                    />
+                    <span className="truncate font-medium text-ink">{it.title}</span>
+                    <span className="truncate text-[11px] text-faint">{it.reason}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  disabled={scopeChecked.size === 0}
+                  onClick={() => void enqueueScope()}
+                  className="rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-surface shadow-glow hover:bg-accent-h disabled:opacity-40"
+                >
+                  确认改写 {scopeChecked.size} 章（入队）
+                </button>
+                <span className="text-[10px] text-faint">
+                  每章改写前自动快照，可整批回滚
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* 输入区 */}
       <div className="flex shrink-0 gap-2 border-t border-line p-3">
@@ -272,6 +389,14 @@ export function AssistantPanel({
           className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
         >
           改写本章
+        </button>
+        <button
+          disabled={busy || scopeBusy}
+          title="按摘要链定位受影响章节，确认后批量改写"
+          onClick={() => setScopeOpen((v) => !v)}
+          className="shrink-0 rounded-full bg-white/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+        >
+          跨章改写
         </button>
       </div>
     </div>
