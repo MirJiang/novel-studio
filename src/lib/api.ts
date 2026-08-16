@@ -223,6 +223,9 @@ export const api = {
   /** 取消任务：pending 直接取消，running 在当前步骤完成后停 */
   cancelTask: (id: number) => invoke<void>("cancel_task", { id }),
 
+  /** 继续被断点暂停的任务 */
+  resumeTask: (id: number) => invoke<void>("resume_task", { id }),
+
   /** 失败/取消的任务按原参数重新入队 */
   retryTask: (id: number) => invoke<Task>("retry_task", { id }),
 

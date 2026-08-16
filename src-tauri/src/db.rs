@@ -1492,8 +1492,18 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE tasks SET status = 'error', error = '应用重启，任务中断（可重试，已完成的部分保留）', updated_at = ?1
-             WHERE status = 'running'",
+             WHERE status IN ('running', 'paused')",
             params![now()],
+        )?;
+        Ok(())
+    }
+
+    /// 暂停的任务重新排队（可附带扣减后的 payload）
+    pub fn reset_task_to_pending(&self, id: i64, payload: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET status = 'pending', payload = ?1, updated_at = ?2 WHERE id = ?3",
+            params![payload, now(), id],
         )?;
         Ok(())
     }

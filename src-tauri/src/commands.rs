@@ -997,6 +997,13 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
 
     let cfg = load_llm_config(db);
     let base_count = db.chapter_count(project_id).map_err(|e| e.to_string())?;
+    // 断点自检间隔（设置里配，0 = 不暂停）
+    let checkpoint_interval: i64 = db
+        .get_setting("batch_checkpoint_interval")
+        .ok()
+        .flatten()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
 
     // 本次写成的章节（标题 + 摘要），供收尾时推进大纲
     let mut written: Vec<(String, String)> = Vec::new();
@@ -1095,6 +1102,21 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
             let _ = db.save_summary(chapter.id, &summary);
         }
         written.push((chapter_title.clone(), summary));
+
+        // 断点自检：每写满 interval 章暂停，AI 巡检本批章节后等用户决定继续/叫停
+        if checkpoint_interval > 0
+            && written.len() as i64 % checkpoint_interval == 0
+            && (i + 1) < count
+        {
+            let _ = db.update_task_progress(task.id, i + 1, count, "自检中…");
+            let from = written.len().saturating_sub(checkpoint_interval as usize);
+            let report = checkpoint_review(db, &cfg, project_id, &written[from..]).await;
+            return Ok(TaskEnd::Paused(format!(
+                "已完成 {} 章｜巡检：{}",
+                written.len(),
+                report
+            )));
+        }
     }
 
     // 大纲自动推进：让 LLM 判断本次内容覆盖到第几个节点，标 done（失败静默跳过）
@@ -1115,6 +1137,56 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         Ok(TaskEnd::Cancelled(format!("{msg}（已取消）")))
     } else {
         Ok(TaskEnd::Done(msg))
+    }
+}
+
+/// 断点巡检：责编视角检查刚写的一批章节（连贯/设定/节奏），200 字简报
+async fn checkpoint_review(
+    db: &Db,
+    cfg: &LlmConfig,
+    project_id: i64,
+    batch: &[(String, String)],
+) -> String {
+    let entries = db.list_lore_entries(project_id).unwrap_or_default();
+    let lore: String = entries
+        .iter()
+        .filter(|e| e.enabled)
+        .map(|e| format!("◆ {}（{}）{}", e.title, e.category, e.content.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lore = head_chars(&lore, 1500);
+    let chapters: String = batch
+        .iter()
+        .map(|(t, s)| format!("《{t}》{s}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let resp = llm::chat_once(
+        cfg.clone(),
+        vec![
+            (
+                "system".to_string(),
+                "你是网文责编，巡检刚批量生成的一批章节。只看三件事：\
+                剧情是否连贯（与前文有无矛盾）、是否违反设定、节奏是否崩（注水/过渡章连发）。\
+                200 字以内给结论：没问题就写「通过」加一句点评；有问题按条列出并给修正建议。\
+                只输出结论。"
+                    .to_string(),
+            ),
+            (
+                "user".to_string(),
+                format!(
+                    "【设定资料】\n{}\n\n【本批新写章节摘要】\n{}",
+                    if lore.is_empty() { "（无）" } else { &lore },
+                    chapters
+                ),
+            ),
+        ],
+    )
+    .await;
+
+    match resp {
+        Ok(text) => text.trim().to_string(),
+        Err(e) => format!("巡检调用失败：{e}"),
     }
 }
 

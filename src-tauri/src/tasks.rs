@@ -14,6 +14,8 @@ use tokio::sync::Notify;
 pub enum TaskEnd {
     Done(String),
     Cancelled(String),
+    /// 断点暂停（如批量写章每 N 章自检）：携带巡检简报，用户决定是否继续
+    Paused(String),
 }
 
 fn notify() -> &'static Notify {
@@ -58,6 +60,9 @@ pub fn spawn_worker(app: AppHandle, db: Db) {
                         Ok(TaskEnd::Done(msg)) => db.finish_task(task.id, "done", &msg, ""),
                         Ok(TaskEnd::Cancelled(msg)) => {
                             db.finish_task(task.id, "cancelled", &msg, "")
+                        }
+                        Ok(TaskEnd::Paused(msg)) => {
+                            db.finish_task(task.id, "paused", &msg, "")
                         }
                         Err(e) => db.finish_task(task.id, "error", "", &e),
                     };
@@ -219,6 +224,32 @@ pub fn cancel_task(db: State<'_, Db>, id: i64) -> Result<(), String> {
         "running" => request_cancel(id),
         _ => {}
     }
+    Ok(())
+}
+
+/// 继续被暂停的任务（断点自检后）：回到 pending，worker 接着跑
+#[tauri::command]
+pub fn resume_task(db: State<'_, Db>, id: i64) -> Result<(), String> {
+    let t = db.get_task(id).map_err(|e| e.to_string())?;
+    if t.status != "paused" {
+        return Err("任务不在暂停状态".to_string());
+    }
+    // 批量写章按已完成进度扣减（同重试逻辑）
+    let mut payload = t.payload.clone();
+    if t.kind == "batch_chapters" && t.progress_current > 0 {
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&t.payload) {
+            let orig = v["chapter_count"].as_i64().unwrap_or(0);
+            if orig > 0 {
+                let remaining = (orig - t.progress_current).max(1);
+                v["chapter_count"] = serde_json::json!(remaining);
+                payload = v.to_string();
+            }
+        }
+    }
+    // 用扣减后的 payload 更新同一任务并重新排队
+    db.reset_task_to_pending(id, &payload)
+        .map_err(|e| e.to_string())?;
+    notify().notify_one();
     Ok(())
 }
 

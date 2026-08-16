@@ -65,6 +65,7 @@ pub fn run() {
             tasks::enqueue_rewrite_chapters,
             tasks::list_tasks,
             tasks::cancel_task,
+            tasks::resume_task,
             tasks::retry_task,
             tasks::clear_finished_tasks,
             commands::locate_rewrite_scope,

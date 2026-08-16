@@ -17,6 +17,7 @@ const KIND_LABEL: Record<string, string> = {
 const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
   pending: { label: "排队中", cls: "bg-pyellow text-pyellow-t" },
   running: { label: "进行中", cls: "bg-accent-soft text-accent" },
+  paused: { label: "待继续", cls: "bg-pyellow text-pyellow-t" },
   done: { label: "完成", cls: "bg-pgreen text-pgreen-t" },
   error: { label: "失败", cls: "bg-pred text-pred-t" },
   cancelled: { label: "已取消", cls: "bg-black/6 text-muted" },
@@ -95,6 +96,16 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
                     </button>
                   ) : (
                     <>
+                      {t.status === "paused" && (
+                        <button
+                          className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
+                          onClick={() =>
+                            void act(() => api.resumeTask(t.id), "已继续")
+                          }
+                        >
+                          继续
+                        </button>
+                      )}
                       {t.kind === "rewrite_chapters" && t.status === "done" && (
                         <button
                           className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-pyellow-t shadow-card transition-colors hover:bg-surface"
@@ -108,14 +119,16 @@ export function TasksView({ tasks, projects, onChanged, onToast }: TasksViewProp
                           回滚
                         </button>
                       )}
-                      <button
-                        className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
-                        onClick={() =>
-                          void act(() => api.retryTask(t.id), "已重新入队")
-                        }
-                      >
-                        重试
-                      </button>
+                      {t.status !== "paused" && (
+                        <button
+                          className="rounded-full bg-white/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                          onClick={() =>
+                            void act(() => api.retryTask(t.id), "已重新入队")
+                          }
+                        >
+                          重试
+                        </button>
+                      )}
                     </>
                   )}
                 </div>

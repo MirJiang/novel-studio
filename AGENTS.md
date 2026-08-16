@@ -101,7 +101,7 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 - 导出：`export_project(project_id, path)` → txt
 - 封面：`generate_cover(project_id, prompt, title, author)` → { path, data_url }；`list_covers` `get_cover_data`
 - 体检：`summary_stats` `generate_missing_summaries`（进度事件）`check_consistency`（流式）`save_check_report` `list_check_reports` `get_check_report`
-- 任务队列：`enqueue_batch_chapters` `enqueue_video_shots` `list_tasks` `cancel_task` `retry_task` `clear_finished_tasks`（前端 2s 轮询 tasks 表驱动浮条/toast/章节实时刷新；批量写章参数 count<=0 按全书目标字数推算，逐章落库+自动摘要+收尾推进大纲）
+- 任务队列：`enqueue_batch_chapters` `enqueue_video_shots` `enqueue_rewrite_chapters` `list_tasks` `cancel_task` `resume_task`（断点继续）`retry_task` `clear_finished_tasks`（前端 2s 轮询 tasks 表驱动浮条/toast/章节实时刷新；批量写章参数 count<=0 按全书目标字数推算，逐章落库+自动摘要+收尾推进大纲）
 - 风格库：`distill_style(name, source, sample_text)` `list_styles` `delete_style` `set_project_style(project_id, style_id)`
 - 发布：`open_fanqie_window` `fill_chapter_draft(chapter_id)`（番茄章节，只填不发布）
   `open_douyin_window` `fill_douyin_caption(video_id)`（抖音上传页填标题+话题；视频文件人工拖入——文件框 JS 设不了）
@@ -173,6 +173,7 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 - 批量写章：Editor「批量写章」弹层（零章节新书的空状态页也有入口）→ 后端 generate_chapters
   逐章 chat_once 落库 + 自动摘要（摘要链不断档），可最小化后台跑（右下角浮条 + toast 提醒），可中途取消（已写保留），
   章节列表随生成实时刷新，收尾时 LLM 按本次摘要自动推进大纲 ◀当前 节点；
+  设置项 batch_checkpoint_interval：每写满 N 章暂停 + AI 巡检简报（连贯/设定/节奏），任务面板看报告点「继续」；
   长任务统一走任务队列（tasks.rs worker + tasks 表 + AppRail「任务」面板）
   支持按章数或「写完整本书」（按作品目标总字数推算章数）；
   创建作品（空白/AI 向导）均可设全书目标字数 + 每章字数（projects v7 两列，0=未设置）

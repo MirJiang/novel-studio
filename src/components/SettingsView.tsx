@@ -36,6 +36,12 @@ const SECTIONS: SectionDef[] = [
         placeholder: "deepseek-chat",
         secret: false,
       },
+      {
+        key: "batch_checkpoint_interval",
+        label: "批量写章自检断点（每 N 章暂停巡检，0=关闭）",
+        placeholder: "0",
+        secret: false,
+      },
     ],
   },
   {
