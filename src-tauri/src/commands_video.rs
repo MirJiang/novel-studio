@@ -416,9 +416,20 @@ fn load_video_gen_config(db: &Db) -> VideoGenConfig {
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| default.to_string())
     };
+    // 视频独立配置（设置里与封面生图分家）；地址/Key 留空回退生图配置，老配置零迁移
+    let base_url = read("video_base_url", "");
+    let api_key = read("video_api_key", "");
     VideoGenConfig {
-        base_url: read("img_base_url", "https://ark.cn-beijing.volces.com/api/v3"),
-        api_key: read("img_api_key", ""),
+        base_url: if base_url.is_empty() {
+            read("img_base_url", "https://ark.cn-beijing.volces.com/api/v3")
+        } else {
+            base_url
+        },
+        api_key: if api_key.is_empty() {
+            read("img_api_key", "")
+        } else {
+            api_key
+        },
         model: read("video_model", "doubao-seedance-1-0-pro-250528"),
         duration_secs: read("video_duration", "5")
             .parse()
@@ -459,7 +470,7 @@ async fn gen_one_shot_video(
     )
     .await
     .map_err(|e| e.to_string())?;
-    db.set_shot_video(shot.id, &out.to_string_lossy().to_string())
+    db.set_shot_video(shot.id, out.to_string_lossy().as_ref())
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -588,7 +599,7 @@ async fn synth_one_voice(
     let path = videos_dir(app, &video)?.join(format!("shot-{}.mp3", shot.id));
     std::fs::write(&path, &mp3).map_err(|e| format!("保存配音失败: {e}"))?;
     let duration = video::probe_duration_ms(&path).map_err(|e| e.to_string())?;
-    db.set_shot_audio(shot.id, &path.to_string_lossy().to_string(), duration)
+    db.set_shot_audio(shot.id, path.to_string_lossy().as_ref(), duration)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -701,7 +712,7 @@ pub async fn compose_video(
                 label: "完成".to_string(),
             });
             let _ = channel.send(ProgressEvent::Done);
-            db.set_video_output(video_id, &out.to_string_lossy().to_string())
+            db.set_video_output(video_id, out.to_string_lossy().as_ref())
                 .map_err(|e| e.to_string())?;
             get_video_detail(db, video_id)
         }

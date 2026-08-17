@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
-import type { OutlineItem, Project } from "../types";
+import type { ChapterMeta, OutlineItem, Project } from "../types";
 
 interface OutlineViewProps {
   project: Project;
@@ -22,10 +22,13 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
   const [items, setItems] = useState<OutlineItem[]>([]);
   const [outlineBusy, setOutlineBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 各卷已写章数（进度按章显示用）
+  const [chapters, setChapters] = useState<ChapterMeta[]>([]);
 
   const refresh = useCallback(async () => {
     try {
       setItems(await api.listOutline(project.id));
+      setChapters(await api.listChapters(project.id));
     } catch (e) {
       console.error(e);
     }
@@ -34,6 +37,15 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /** 各卷已写章数（outline_item_id → 章数） */
+  const writtenByVolume = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const c of chapters) {
+      m.set(c.outline_item_id, (m.get(c.outline_item_id) ?? 0) + 1);
+    }
+    return m;
+  }, [chapters]);
 
   // 简介/标签 防抖保存
   const scheduleSaveInfo = (desc: string, syn: string) => {
@@ -78,6 +90,7 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
   };
 
   const done = items.filter((i) => i.status === "done").length;
+  const totalTarget = items.reduce((s, i) => s + i.target_chapters, 0);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -157,6 +170,8 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
               </div>
               <span className="text-[11px] text-muted">
                 {done}/{items.length} 节点
+                {totalTarget > 0 &&
+                  ` · ${chapters.length} 章 / 全书预估约 ${totalTarget} 章`}
               </span>
             </div>
           )}
@@ -171,6 +186,7 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
               <OutlineCard
                 key={item.id}
                 item={item}
+                written={writtenByVolume.get(item.id) ?? 0}
                 current={item.status !== "done" && done === i}
                 onChanged={refresh}
               />
@@ -190,27 +206,32 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
 
 function OutlineCard({
   item,
+  written,
   current,
   onChanged,
 }: {
   item: OutlineItem;
+  /** 本卷已写章数 */
+  written: number;
   /** 首个未完成节点 = 当前进度 */
   current: boolean;
   onChanged: () => void;
 }) {
   const [title, setTitle] = useState(item.title);
   const [content, setContent] = useState(item.content);
+  const [target, setTarget] = useState(String(item.target_chapters || ""));
   const timer = useRef<number | null>(null);
 
   useEffect(() => {
     setTitle(item.title);
     setContent(item.content);
-  }, [item.id, item.title, item.content]);
+    setTarget(String(item.target_chapters || ""));
+  }, [item.id, item.title, item.content, item.target_chapters]);
 
-  const scheduleSave = (t: string, c: string) => {
+  const scheduleSave = (t: string, c: string, tc: string) => {
     if (timer.current != null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      void api.saveOutlineItem(item.id, t, c);
+      void api.saveOutlineItem(item.id, t, c, parseInt(tc, 10) || 0);
     }, 800);
   };
 
@@ -246,9 +267,26 @@ function OutlineCard({
           value={title}
           onChange={(e) => {
             setTitle(e.target.value);
-            scheduleSave(e.target.value, content);
+            scheduleSave(e.target.value, content, target);
           }}
         />
+        <span
+          className="flex shrink-0 items-center gap-1 text-[11px] text-faint"
+          title="本卷预估章数：AI 生成大纲时按剧情体量估，可手改；收卷判定的下限依据"
+        >
+          约
+          <input
+            className="w-12 rounded-md bg-card/70 px-1.5 py-0.5 text-center text-[11px] text-body outline-none focus:bg-surface"
+            placeholder="—"
+            inputMode="numeric"
+            value={target}
+            onChange={(e) => {
+              setTarget(e.target.value);
+              scheduleSave(title, content, e.target.value);
+            }}
+          />
+          章
+        </span>
         {current && (
           <span className="shrink-0 rounded-full bg-accent px-2 py-px text-[10px] font-medium text-white">
             当前进度
@@ -268,9 +306,16 @@ function OutlineCard({
         value={content}
         onChange={(e) => {
           setContent(e.target.value);
-          scheduleSave(title, e.target.value);
+          scheduleSave(title, e.target.value, target);
         }}
       />
+      <p className="mt-1.5 text-[11px] text-faint">
+        已写 {written} 章
+        {item.target_chapters > 0 && ` / 约 ${item.target_chapters} 章`}
+        {item.target_chapters > 0 &&
+          written * 5 < item.target_chapters * 3 &&
+          "（未到预估六成，不会自动收卷）"}
+      </p>
     </div>
   );
 }

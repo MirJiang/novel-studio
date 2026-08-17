@@ -34,6 +34,8 @@ pub struct ChapterMeta {
     pub title: String,
     pub order_index: i64,
     pub word_count: i64,
+    /// 所属卷（大纲节点 id，0=未分卷）
+    pub outline_item_id: i64,
     pub updated_at: i64,
 }
 
@@ -47,6 +49,8 @@ pub struct Chapter {
     pub summary: String,
     pub order_index: i64,
     pub word_count: i64,
+    /// 所属卷（大纲节点 id，0=未分卷）
+    pub outline_item_id: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -159,8 +163,37 @@ pub struct OutlineItem {
     pub content: String,
     pub order_index: i64,
     pub status: String,
+    /// 按剧情体量预估的本卷章数（0=未预估），v19
+    pub target_chapters: i64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// 待写入的设定变更（AI 提取产物）
+#[derive(Debug, Clone)]
+pub struct NewLoreChange {
+    /// 命中的现有条目 id（None = 新登场事物）
+    pub entry_id: Option<i64>,
+    pub entry_title: String,
+    pub category: String,
+    /// new 登场 / update 变更 / retire 退场
+    pub kind: String,
+    pub detail: String,
+}
+
+/// 台账行（联表 chapters 带章节标题/序号）
+#[derive(Debug, Serialize, Clone)]
+pub struct LoreChangeRow {
+    pub id: i64,
+    pub chapter_id: i64,
+    pub chapter_title: String,
+    pub chapter_order: i64,
+    pub entry_id: Option<i64>,
+    pub entry_title: String,
+    pub category: String,
+    pub kind: String,
+    pub detail: String,
+    pub created_at: i64,
 }
 
 /// AI 起书的会话归档
@@ -172,6 +205,8 @@ pub struct ChatSession {
     pub messages: String,
     /// 产出的草稿（JSON，空串 = 未产出）
     pub draft: String,
+    /// 场景：bootstrap 起书向导 / style 风格对话（v16）
+    pub scene: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -473,6 +508,50 @@ impl Db {
             Self::seed_builtin_styles(&conn)?;
         }
         conn.pragma_update(None, "user_version", 15)?;
+        // v16：chat_sessions.scene——会话按场景归档（bootstrap 起书向导 / style 风格对话），历史互不串扰
+        if version < 16 {
+            conn.execute_batch(
+                "ALTER TABLE chat_sessions ADD COLUMN scene TEXT NOT NULL DEFAULT 'bootstrap';",
+            )
+            .context("迁移 v16 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 16)?;
+        // v17：设定变更台账（AI 从章节提取的设定状态变化，只读查看，无审核流）
+        if version < 17 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS lore_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+                    entry_id INTEGER,
+                    entry_title TEXT NOT NULL DEFAULT '',
+                    category TEXT NOT NULL DEFAULT '其他',
+                    kind TEXT NOT NULL DEFAULT 'update',
+                    detail TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_lore_changes_project ON lore_changes(project_id, chapter_id);",
+            )
+            .context("迁移 v17 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 17)?;
+        // v18：卷的概念——章节归属大纲节点（卷 = 分卷大纲节点，0=未分卷），章节列表按卷分组
+        if version < 18 {
+            conn.execute_batch(
+                "ALTER TABLE chapters ADD COLUMN outline_item_id INTEGER NOT NULL DEFAULT 0;",
+            )
+            .context("迁移 v18 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 18)?;
+        // v19：outline_items.target_chapters——按剧情体量预估的各卷章数（非平均分），
+        // 注入 prompt 与收卷判定用（0=未预估）
+        if version < 19 {
+            conn.execute_batch(
+                "ALTER TABLE outline_items ADD COLUMN target_chapters INTEGER NOT NULL DEFAULT 0;",
+            )
+            .context("迁移 v19 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 19)?;
         Ok(())
     }
 
@@ -641,10 +720,19 @@ impl Db {
             params![project_id],
             |r| r.get(0),
         )?;
+        // 自动归入当前卷（首个未完成的大纲节点；无大纲/全部完成则未分卷）
+        let current_volume: i64 = conn
+            .query_row(
+                "SELECT id FROM outline_items WHERE project_id = ?1 AND status != 'done'
+                 ORDER BY order_index ASC LIMIT 1",
+                params![project_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
         conn.execute(
-            "INSERT INTO chapters (project_id, title, order_index, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![project_id, title, next_index, ts],
+            "INSERT INTO chapters (project_id, title, order_index, outline_item_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![project_id, title, next_index, current_volume, ts],
         )?;
         Ok(Chapter {
             id: conn.last_insert_rowid(),
@@ -654,15 +742,42 @@ impl Db {
             summary: String::new(),
             order_index: next_index,
             word_count: 0,
+            outline_item_id: current_volume,
             created_at: ts,
             updated_at: ts,
         })
     }
 
+    /// 手动调整章节所属卷（0 = 未分卷）
+    pub fn set_chapter_volume(&self, chapter_id: i64, outline_item_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE chapters SET outline_item_id = ?1 WHERE id = ?2",
+            params![outline_item_id, chapter_id],
+        )?;
+        Ok(())
+    }
+
+    /// 各卷章数统计（续写/批量注入大纲时标注「本卷已写 N 章」用）
+    pub fn count_chapters_by_outline(
+        &self,
+        project_id: i64,
+    ) -> Result<std::collections::HashMap<i64, i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT outline_item_id, COUNT(*) FROM chapters WHERE project_id = ?1
+             GROUP BY outline_item_id",
+        )?;
+        let rows = stmt.query_map(params![project_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+    }
+
     pub fn list_chapters(&self, project_id: i64) -> Result<Vec<ChapterMeta>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, title, order_index, word_count, updated_at
+            "SELECT id, project_id, title, order_index, word_count, outline_item_id, updated_at
              FROM chapters WHERE project_id = ?1 ORDER BY order_index ASC",
         )?;
         let rows = stmt.query_map(params![project_id], |r| {
@@ -672,7 +787,8 @@ impl Db {
                 title: r.get(2)?,
                 order_index: r.get(3)?,
                 word_count: r.get(4)?,
-                updated_at: r.get(5)?,
+                outline_item_id: r.get(5)?,
+                updated_at: r.get(6)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -681,7 +797,7 @@ impl Db {
     pub fn get_chapter(&self, id: i64) -> Result<Chapter> {
         let conn = self.conn.lock().unwrap();
         let chapter = conn.query_row(
-            "SELECT id, project_id, title, content, summary, order_index, word_count, created_at, updated_at
+            "SELECT id, project_id, title, content, summary, order_index, word_count, outline_item_id, created_at, updated_at
              FROM chapters WHERE id = ?1",
             params![id],
             |r| {
@@ -693,8 +809,9 @@ impl Db {
                     summary: r.get(4)?,
                     order_index: r.get(5)?,
                     word_count: r.get(6)?,
-                    created_at: r.get(7)?,
-                    updated_at: r.get(8)?,
+                    outline_item_id: r.get(7)?,
+                    created_at: r.get(8)?,
+                    updated_at: r.get(9)?,
                 })
             },
         )?;
@@ -716,7 +833,7 @@ impl Db {
     pub fn last_chapter(&self, project_id: i64) -> Result<Option<Chapter>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, title, content, summary, order_index, word_count, created_at, updated_at
+            "SELECT id, project_id, title, content, summary, order_index, word_count, outline_item_id, created_at, updated_at
              FROM chapters WHERE project_id = ?1 ORDER BY order_index DESC LIMIT 1",
         )?;
         let mut rows = stmt.query_map(params![project_id], |r| {
@@ -728,8 +845,9 @@ impl Db {
                 summary: r.get(4)?,
                 order_index: r.get(5)?,
                 word_count: r.get(6)?,
-                created_at: r.get(7)?,
-                updated_at: r.get(8)?,
+                outline_item_id: r.get(7)?,
+                created_at: r.get(8)?,
+                updated_at: r.get(9)?,
             })
         })?;
         Ok(rows.next().transpose()?)
@@ -832,7 +950,7 @@ impl Db {
     pub fn list_chapters_missing_summary(&self, project_id: i64) -> Result<Vec<Chapter>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, title, content, summary, order_index, word_count, created_at, updated_at
+            "SELECT id, project_id, title, content, summary, order_index, word_count, outline_item_id, created_at, updated_at
              FROM chapters WHERE project_id = ?1 AND summary = ''
              ORDER BY order_index ASC",
         )?;
@@ -845,8 +963,9 @@ impl Db {
                 summary: r.get(4)?,
                 order_index: r.get(5)?,
                 word_count: r.get(6)?,
-                created_at: r.get(7)?,
-                updated_at: r.get(8)?,
+                outline_item_id: r.get(7)?,
+                created_at: r.get(8)?,
+                updated_at: r.get(9)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1035,7 +1154,7 @@ impl Db {
     pub fn list_outline(&self, project_id: i64) -> Result<Vec<OutlineItem>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, title, content, order_index, status, created_at, updated_at
+            "SELECT id, project_id, title, content, order_index, status, target_chapters, created_at, updated_at
              FROM outline_items WHERE project_id = ?1 ORDER BY order_index ASC",
         )?;
         let rows = stmt.query_map(params![project_id], |r| {
@@ -1046,8 +1165,9 @@ impl Db {
                 content: r.get(3)?,
                 order_index: r.get(4)?,
                 status: r.get(5)?,
-                created_at: r.get(6)?,
-                updated_at: r.get(7)?,
+                target_chapters: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1073,16 +1193,23 @@ impl Db {
             content: String::new(),
             order_index: next,
             status: "planned".to_string(),
+            target_chapters: 0,
             created_at: ts,
             updated_at: ts,
         })
     }
 
-    pub fn save_outline_item(&self, id: i64, title: &str, content: &str) -> Result<()> {
+    pub fn save_outline_item(
+        &self,
+        id: i64,
+        title: &str,
+        content: &str,
+        target_chapters: i64,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE outline_items SET title = ?1, content = ?2, updated_at = ?3 WHERE id = ?4",
-            params![title, content, now(), id],
+            "UPDATE outline_items SET title = ?1, content = ?2, target_chapters = ?3, updated_at = ?4 WHERE id = ?5",
+            params![title, content, target_chapters.max(0), now(), id],
         )?;
         Ok(())
     }
@@ -1102,19 +1229,19 @@ impl Db {
         Ok(())
     }
 
-    /// AI 生成大纲后整表替换
-    pub fn replace_outline(&self, project_id: i64, items: &[(String, String)]) -> Result<()> {
+    /// AI 生成大纲后整表替换（title, content, target_chapters 三元组）
+    pub fn replace_outline(&self, project_id: i64, items: &[(String, String, i64)]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM outline_items WHERE project_id = ?1",
             params![project_id],
         )?;
         let ts = now();
-        for (i, (title, content)) in items.iter().enumerate() {
+        for (i, (title, content, target)) in items.iter().enumerate() {
             conn.execute(
-                "INSERT INTO outline_items (project_id, title, content, order_index, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                params![project_id, title, content, i as i64 + 1, ts],
+                "INSERT INTO outline_items (project_id, title, content, order_index, target_chapters, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![project_id, title, content, i as i64 + 1, target.max(&0), ts],
             )?;
         }
         Ok(())
@@ -1441,6 +1568,90 @@ impl Db {
         })
     }
 
+    /// 更新风格卡（对话优化后保存：只动名称与卡内容，来源/样本信息保留）
+    pub fn update_style(&self, id: i64, name: &str, guide: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE styles SET name = ?1, guide = ?2, updated_at = ?3 WHERE id = ?4",
+            params![name, guide, now(), id],
+        )?;
+        Ok(())
+    }
+
+    // ---------- 设定变更台账 ----------
+
+    /// 整章替换该章的变更记录（重复提取幂等：先删后插）
+    pub fn replace_lore_changes(
+        &self,
+        project_id: i64,
+        chapter_id: i64,
+        rows: &[NewLoreChange],
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM lore_changes WHERE chapter_id = ?1",
+            params![chapter_id],
+        )?;
+        let ts = now();
+        for r in rows {
+            conn.execute(
+                "INSERT INTO lore_changes (project_id, chapter_id, entry_id, entry_title, category, kind, detail, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![project_id, chapter_id, r.entry_id, r.entry_title, r.category, r.kind, r.detail, ts],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 台账列表（联表带章节标题/序号，新的章在前）；
+    /// entry_id/entry_title 给值时按条目过滤（条目编辑器的时间线用）
+    pub fn list_lore_changes(
+        &self,
+        project_id: i64,
+        entry_id: Option<i64>,
+        entry_title: Option<&str>,
+    ) -> Result<Vec<LoreChangeRow>> {
+        let conn = self.conn.lock().unwrap();
+        let filter_entry = entry_id.is_some() || entry_title.is_some();
+        let sql = if filter_entry {
+            "SELECT c.id, c.chapter_id, ch.title, ch.order_index, c.entry_id, c.entry_title, c.category, c.kind, c.detail, c.created_at
+             FROM lore_changes c JOIN chapters ch ON ch.id = c.chapter_id
+             WHERE c.project_id = ?1 AND (c.entry_id = ?2 OR c.entry_title = ?3)
+             ORDER BY ch.order_index DESC, c.id DESC"
+        } else {
+            "SELECT c.id, c.chapter_id, ch.title, ch.order_index, c.entry_id, c.entry_title, c.category, c.kind, c.detail, c.created_at
+             FROM lore_changes c JOIN chapters ch ON ch.id = c.chapter_id
+             WHERE c.project_id = ?1
+             ORDER BY ch.order_index DESC, c.id DESC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let map = |r: &rusqlite::Row| -> rusqlite::Result<LoreChangeRow> {
+            Ok(LoreChangeRow {
+                id: r.get(0)?,
+                chapter_id: r.get(1)?,
+                chapter_title: r.get(2)?,
+                chapter_order: r.get(3)?,
+                entry_id: r.get(4)?,
+                entry_title: r.get(5)?,
+                category: r.get(6)?,
+                kind: r.get(7)?,
+                detail: r.get(8)?,
+                created_at: r.get(9)?,
+            })
+        };
+        let rows = if filter_entry {
+            stmt.query_map(
+                params![project_id, entry_id.unwrap_or(0), entry_title.unwrap_or("")],
+                map,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(params![project_id], map)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        Ok(rows)
+    }
+
     pub fn list_styles(&self) -> Result<Vec<Style>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -1643,13 +1854,14 @@ impl Db {
 
     // ---------- AI 起书会话归档 ----------
 
-    /// 保存会话：id 为 None 新建，否则按 id 更新；返回会话 id
+    /// 保存会话：id 为 None 新建（记入 scene），否则按 id 更新；返回会话 id
     pub fn save_chat_session(
         &self,
         id: Option<i64>,
         title: &str,
         messages: &str,
         draft: &str,
+        scene: &str,
     ) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         let ts = now();
@@ -1663,9 +1875,9 @@ impl Db {
             }
             None => {
                 conn.execute(
-                    "INSERT INTO chat_sessions (title, messages, draft, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?4)",
-                    params![title, messages, draft, ts],
+                    "INSERT INTO chat_sessions (title, messages, draft, scene, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                    params![title, messages, draft, scene, ts],
                 )?;
                 Ok(conn.last_insert_rowid())
             }
@@ -1680,28 +1892,29 @@ impl Db {
             draft: r.get(3)?,
             created_at: r.get(4)?,
             updated_at: r.get(5)?,
+            scene: r.get(6)?,
         })
     }
 
-    /// 最近的一条会话（进入向导时恢复）
-    pub fn latest_chat_session(&self) -> Result<Option<ChatSession>> {
+    /// 最近的一条会话（按场景过滤，进入向导/风格对话时恢复）
+    pub fn latest_chat_session(&self, scene: &str) -> Result<Option<ChatSession>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, messages, draft, created_at, updated_at
-             FROM chat_sessions ORDER BY updated_at DESC LIMIT 1",
+            "SELECT id, title, messages, draft, created_at, updated_at, scene
+             FROM chat_sessions WHERE scene = ?1 ORDER BY updated_at DESC LIMIT 1",
         )?;
-        let mut rows = stmt.query_map([], Self::row_to_chat_session)?;
+        let mut rows = stmt.query_map(params![scene], Self::row_to_chat_session)?;
         Ok(rows.next().transpose()?)
     }
 
-    /// 全部会话（新→旧，归档列表用）
-    pub fn list_chat_sessions(&self) -> Result<Vec<ChatSession>> {
+    /// 全部会话（按场景过滤，新→旧，归档列表用）
+    pub fn list_chat_sessions(&self, scene: &str) -> Result<Vec<ChatSession>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, messages, draft, created_at, updated_at
-             FROM chat_sessions ORDER BY updated_at DESC LIMIT 50",
+            "SELECT id, title, messages, draft, created_at, updated_at, scene
+             FROM chat_sessions WHERE scene = ?1 ORDER BY updated_at DESC LIMIT 50",
         )?;
-        let rows = stmt.query_map([], Self::row_to_chat_session)?;
+        let rows = stmt.query_map(params![scene], Self::row_to_chat_session)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 

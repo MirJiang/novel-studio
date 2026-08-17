@@ -1,7 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { IMAGE_PRESETS, VIDEO_PRESETS } from "../lib/stylePresets";
-import type { Style } from "../types";
+import { AiMarkdown } from "./Markdown";
+import type { ChatMsg, ChatSession, FqBook, Style } from "../types";
+
+interface UiMsg {
+  role: "user" | "ai";
+  text: string;
+}
+
+/** 风格对话会话的 draft（存 chat_sessions.draft，场景 style） */
+interface StyleChatDraft {
+  card: string;
+  name: string;
+  kind: "text" | "image" | "video";
+  /** 优化现有风格模式：被优化的风格 id（无 = 新风格） */
+  editStyleId?: number;
+  /** 优化模式的底卡（每次发送垫作上下文，恢复会话时仍要用） */
+  baseCard?: string;
+}
+
+/** 对话开场白（按页签类型） */
+const GEN_GREETINGS = {
+  text: "想调一个什么样的写作风格？说说感觉就行——像哪位作家、什么题材用、要爽感还是要细腻，我帮你把它做成一张可执行的风格卡。",
+  image: "想要什么画风？说说参考感觉就行，比如「吉卜力水彩」「暗黑油画」「日系赛璐璐」，我帮你提炼成一组生图锚点词。",
+  video: "想要什么运镜气质？比如「手持呼吸感」「缓慢推近」「环绕上升」，我帮你提炼成图生视频的运动提示词。",
+} as const;
+
+/** 从完整回复里拆 [CARD] 风格卡（流式 done 后调用）；无标记或卡为空则整段当普通回复 */
+function parseCardReply(raw: string): { reply: string; card: string | null } {
+  const pos = raw.indexOf("[CARD]");
+  if (pos < 0) return { reply: raw.trim(), card: null };
+  const reply = raw.slice(0, pos).trim();
+  let card = raw.slice(pos + 6);
+  const end = card.indexOf("[/CARD]");
+  if (end >= 0) card = card.slice(0, end);
+  const cardText = card.trim();
+  if (!cardText) return { reply: raw.trim(), card: null };
+  return { reply: reply || "风格卡好了，看看右边：", card: cardText };
+}
 
 interface StylesViewProps {
   /** 当前打开的作品（有则风格卡可一键应用） */
@@ -30,14 +67,32 @@ export function StylesView({
   const fileRef = useRef<HTMLInputElement>(null);
   const [distilling, setDistilling] = useState(false);
 
-  // 对话生成风格
-  const [idea, setIdea] = useState("");
+  // 对话生成风格（多轮流式对话，[CARD] 出卡）
+  const [genMessages, setGenMessages] = useState<UiMsg[]>([]);
+  const [genInput, setGenInput] = useState("");
+  const [genBusy, setGenBusy] = useState(false);
   const [cardPreview, setCardPreview] = useState<string | null>(null);
-  const [tweak, setTweak] = useState("");
-  const [cardBusy, setCardBusy] = useState(false);
+  const [cardGenerating, setCardGenerating] = useState(false); // [CARD] 已出现，卡内容生成中
   const [cardName, setCardName] = useState("");
   const [genOpen, setGenOpen] = useState(false); // 对话生成弹层
   const [distillOpen, setDistillOpen] = useState(false); // 上传蒸馏弹层
+  const genChatRef = useRef<HTMLDivElement>(null);
+  // 会话归档（scene=style）：关闭后可从历史恢复
+  const [sessionId, setSessionId] = useState<number | null>(null);
+  const [history, setHistory] = useState<ChatSession[] | null>(null);
+  /** 优化现有风格模式：被优化的风格 id（null = 从零生成新风格） */
+  const [editStyleId, setEditStyleId] = useState<number | null>(null);
+  /** 优化模式的底卡（每次发送垫作上下文，不进 UI 气泡） */
+  const [baseCard, setBaseCard] = useState<string | null>(null);
+
+  // 番茄在线搜书（搜索 → 直接蒸馏 / 下载 txt）
+  const [fqOpen, setFqOpen] = useState(false);
+  const [fqQuery, setFqQuery] = useState("");
+  const [fqResults, setFqResults] = useState<FqBook[] | null>(null);
+  const [fqBusy, setFqBusy] = useState(false); // 搜索中
+  const [fqAction, setFqAction] = useState<string | null>(null); // 进行中的操作
+  const [fqProgress, setFqProgress] = useState<string | null>(null); // 下载进度
+  const [fqInfo, setFqInfo] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -77,42 +132,253 @@ export function StylesView({
     }
   };
 
-  /** 对话生成：描述出卡 / 带微调出卡（kind 跟随当前页签） */
-  const genCard = async (isTweak: boolean) => {
-    if (cardBusy) return;
-    if (isTweak && (!cardPreview || !tweak.trim())) return;
-    if (!isTweak && !idea.trim()) return;
-    setCardBusy(true);
+  /** 开新会话（当前会话已归档到历史，可回看） */
+  const startFreshGen = () => {
+    setGenMessages([{ role: "ai", text: GEN_GREETINGS[tab] }]);
+    setCardPreview(null);
+    setCardName("");
+    setGenInput("");
+    setEditStyleId(null);
+    setBaseCard(null);
+    setSessionId(null);
+    setHistory(null);
     setError(null);
+  };
+
+  /** 打开对话生成弹层：恢复当前页签类型的最近会话，没有则开新会话 */
+  const openGen = () => {
+    startFreshGen();
+    setGenOpen(true);
+    void api
+      .getLatestChatSession("style")
+      .then((s) => {
+        if (!s) return;
+        try {
+          const msgs = JSON.parse(s.messages) as UiMsg[];
+          const d = s.draft ? (JSON.parse(s.draft) as StyleChatDraft) : null;
+          // 只恢复与当前页签同类型的会话（写作/画风/运镜互不串）
+          if (msgs.length === 0 || (d?.kind ?? "text") !== tab) return;
+          setGenMessages(msgs);
+          setCardPreview(d?.card || null);
+          setCardName(d?.name ?? "");
+          setEditStyleId(d?.editStyleId ?? null);
+          setBaseCard(d?.baseCard ?? null);
+          setSessionId(s.id);
+        } catch {
+          /* 数据损坏当新会话 */
+        }
+      })
+      .catch(console.error);
+  };
+
+  /** 从现有风格卡发起「对话优化」：底卡垫作上下文，保存时可改回原卡 */
+  const openEdit = (s: Style) => {
+    setGenMessages([
+      {
+        role: "ai",
+        text: `已载入「${s.name}」的当前风格卡（在右侧）。告诉我想怎么改——比如「节奏再快点」「对话多些潜台词」，我会出一张完整的新卡。`,
+      },
+    ]);
+    setCardPreview(s.guide);
+    setCardName(s.name);
+    setGenInput("");
+    setEditStyleId(s.id);
+    setBaseCard(s.guide);
+    setSessionId(null);
+    setHistory(null);
+    setError(null);
+    setGenOpen(true);
+  };
+
+  /** 持久化当前风格会话（归档即此：旧会话留在库里，新会话另起一行） */
+  const persistGen = (
+    msgs: UiMsg[],
+    card: string | null,
+    nameVal: string,
+    editId: number | null,
+    base: string | null,
+    sid: number | null,
+  ) => {
+    const clean = msgs.filter((m) => m.text.trim());
+    if (clean.length <= 1) return; // 只有开场白没什么可存的
+    const title =
+      editId != null
+        ? `优化：${nameVal || "未命名风格"}`
+        : (clean.find((m) => m.role === "user")?.text.slice(0, 20) ?? "新会话");
+    const draft: StyleChatDraft = {
+      card: card ?? "",
+      name: nameVal,
+      kind: tab,
+      ...(editId != null ? { editStyleId: editId } : {}),
+      ...(base ? { baseCard: base } : {}),
+    };
+    void api
+      .saveChatSession(sid, title, JSON.stringify(clean), JSON.stringify(draft), "style")
+      .then((id) => setSessionId(id))
+      .catch(console.error);
+  };
+
+  const toggleGenHistory = async () => {
+    if (history != null) {
+      setHistory(null);
+      return;
+    }
     try {
-      const card = await api.generateStyleCard(
-        idea.trim(),
-        isTweak ? cardPreview ?? undefined : undefined,
-        isTweak ? tweak.trim() : undefined,
-        tab
-      );
-      setCardPreview(card);
-      setTweak("");
-      if (!cardName.trim() && idea.trim()) setCardName(idea.trim().slice(0, 12));
+      setHistory(await api.listChatSessions("style"));
     } catch (e) {
       setError(String(e));
-    } finally {
-      setCardBusy(false);
     }
   };
 
+  const loadGenSession = (s: ChatSession) => {
+    try {
+      const msgs = JSON.parse(s.messages) as UiMsg[];
+      const d = s.draft ? (JSON.parse(s.draft) as StyleChatDraft) : null;
+      if ((d?.kind ?? "text") !== tab) return; // 类型不匹配不载（列表已过滤，双保险）
+      setGenMessages(msgs.length > 0 ? msgs : [{ role: "ai", text: GEN_GREETINGS[tab] }]);
+      setCardPreview(d?.card || null);
+      setCardName(d?.name ?? "");
+      setEditStyleId(d?.editStyleId ?? null);
+      setBaseCard(d?.baseCard ?? null);
+      setSessionId(s.id);
+      setHistory(null);
+      setError(null);
+    } catch {
+      setError("该会话数据损坏，无法恢复");
+    }
+  };
+
+  // 卡内容/名称手改自动落库（防抖 800ms）
+  const genDraftTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!genOpen || genMessages.length <= 1) return;
+    if (genDraftTimer.current != null) window.clearTimeout(genDraftTimer.current);
+    genDraftTimer.current = window.setTimeout(() => {
+      persistGen(genMessages, cardPreview, cardName, editStyleId, baseCard, sessionId);
+    }, 800);
+  }, [cardPreview, cardName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 历史列表只显示与当前页签同类型的会话 */
+  const visibleHistory = history?.filter((s) => {
+    try {
+      const d = s.draft ? (JSON.parse(s.draft) as StyleChatDraft) : null;
+      return (d?.kind ?? "text") === tab;
+    } catch {
+      return false;
+    }
+  });
+
+  // 对话消息滚到底部
+  useEffect(() => {
+    genChatRef.current?.scrollTo({ top: genChatRef.current.scrollHeight });
+  }, [genMessages]);
+
+  /** 对话生成：多轮流式对话；AI 回复带 [CARD] 时右侧出卡（后续微调会重新出整卡覆盖） */
+  const sendGen = async (text: string) => {
+    const content = text.trim();
+    if (!content || genBusy) return;
+    setError(null);
+    const historyMsgs: ChatMsg[] = [
+      ...genMessages,
+      { role: "user" as const, text: content },
+    ].map((m) => ({
+      role: (m.role === "ai" ? "assistant" : "user") as "user" | "assistant",
+      content: m.text,
+    }));
+    // 先上屏：用户消息 + 空的 AI 气泡（流式填充）
+    setGenMessages((prev) => [
+      ...prev,
+      { role: "user", text: content },
+      { role: "ai", text: "" },
+    ]);
+    setGenInput("");
+    setGenBusy(true);
+    setCardGenerating(false);
+    let acc = "";
+    try {
+      await api.generateStyleCardStream(historyMsgs, tab, baseCard ?? undefined, (ev) => {
+        if (ev.type === "delta") {
+          acc += ev.text;
+          // [CARD] 之后的卡内容不上屏：气泡只显示说明，卡收起为生成状态
+          const pos = acc.indexOf("[CARD]");
+          const generating = pos >= 0;
+          setCardGenerating(generating);
+          const visible = generating ? acc.slice(0, pos).trimEnd() : acc;
+          setGenMessages((prev) => {
+            const next = [...prev];
+            next[next.length - 1] = {
+              role: "ai",
+              text: visible + (generating ? "\n\n*风格卡生成中…*" : ""),
+            };
+            return next;
+          });
+        } else if (ev.type === "error") {
+          setError(ev.message);
+        }
+      });
+      // 流结束：拆卡；会话落库归档
+      const { reply, card } = parseCardReply(acc);
+      const finalMsgs: UiMsg[] = [
+        ...genMessages,
+        { role: "user", text: content },
+        { role: "ai", text: reply },
+      ];
+      setGenMessages(finalMsgs);
+      const nextCard = card ?? cardPreview;
+      let nextName = cardName;
+      if (card) {
+        setCardPreview(card);
+        if (!nextName.trim()) {
+          const firstUser =
+            genMessages.find((m) => m.role === "user")?.text ?? content;
+          nextName = firstUser.slice(0, 12);
+          setCardName(nextName);
+        }
+      }
+      persistGen(finalMsgs, nextCard, nextName, editStyleId, baseCard, sessionId);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setGenBusy(false);
+      setCardGenerating(false);
+    }
+  };
+
+  /** 保存：优化模式改回原卡；否则存为新风格 */
   const saveCard = async () => {
-    if (!cardPreview || !cardName.trim()) return;
+    if (!cardPreview?.trim() || !cardName.trim()) return;
+    try {
+      if (editStyleId != null) {
+        await api.updateStyle(editStyleId, cardName.trim(), cardPreview.trim());
+      } else {
+        const firstUser =
+          genMessages.find((m) => m.role === "user")?.text.trim() ?? "";
+        await api.saveStyleCard(
+          cardName.trim(),
+          firstUser ? `对话生成：${firstUser.slice(0, 30)}` : "对话生成",
+          cardPreview.trim(),
+          tab
+        );
+      }
+      setCardPreview(null);
+      setGenOpen(false);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  /** 优化模式下的「另存为新卡」：原卡不动，当前卡面存成一个新风格 */
+  const saveAsNew = async () => {
+    if (!cardPreview?.trim() || !cardName.trim()) return;
     try {
       await api.saveStyleCard(
         cardName.trim(),
-        idea.trim() ? `对话生成：${idea.trim().slice(0, 30)}` : "对话生成",
-        cardPreview,
+        `对话优化自：${baseCard?.slice(0, 20) ?? "现有风格"}`,
+        cardPreview.trim(),
         tab
       );
       setCardPreview(null);
-      setIdea("");
-      setCardName("");
       setGenOpen(false);
       await refresh();
     } catch (e) {
@@ -134,12 +400,6 @@ export function StylesView({
     tab === "text" ? s.kind === "text" || !s.kind : s.kind === tab,
   );
   const presets = tab === "image" ? IMAGE_PRESETS : VIDEO_PRESETS;
-  const ideaPlaceholder =
-    tab === "text"
-      ? "描述想要的风格，如：古龙风、番茄重生年代文的爽感"
-      : tab === "image"
-        ? "描述想要的画风，如：吉卜力水彩感、暗黑油画"
-        : "描述想要的运镜，如：希区柯克变焦、环绕上升";
 
   const removeStyle = async (id: number) => {
     if (!window.confirm("确定删除这个风格吗？引用它的作品会恢复为不指定风格。"))
@@ -147,6 +407,74 @@ export function StylesView({
     await api.deleteStyle(id);
     await refresh();
     onApplied();
+  };
+
+  // ---------- 番茄在线搜书 ----------
+
+  const fqDoSearch = async () => {
+    const q = fqQuery.trim();
+    if (!q || fqBusy) return;
+    setFqBusy(true);
+    setError(null);
+    setFqInfo(null);
+    try {
+      setFqResults(await api.fqSearch(q));
+    } catch (e) {
+      setError(String(e));
+      setFqResults(null);
+    } finally {
+      setFqBusy(false);
+    }
+  };
+
+  /** 直接蒸馏：抓前几章样本 → 走既有蒸馏管线入库 */
+  const fqDistill = async (b: FqBook) => {
+    if (fqAction) return;
+    setError(null);
+    setFqInfo(null);
+    setFqAction(`正在抓《${b.name}》样本（前几章，约半分钟）…`);
+    try {
+      const sample = await api.fqDistillSample(b.book_id);
+      setFqAction(`样本 ${sample.chars.toLocaleString()} 字，蒸馏中…`);
+      await api.distillStyle(
+        sample.name,
+        `番茄《${sample.name}》${sample.author}（在线样本）`,
+        sample.text
+      );
+      setFqInfo(
+        `《${sample.name}》已蒸馏入库（样本 ${sample.chars.toLocaleString()} 字）`
+      );
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setFqAction(null);
+    }
+  };
+
+  /** 下载全本 txt：先选保存路径，再按章下载（进度条） */
+  const fqDownloadBook = async (b: FqBook) => {
+    if (fqAction) return;
+    const path = await api.saveTextPath(`${b.name}.txt`);
+    if (!path) return;
+    setError(null);
+    setFqInfo(null);
+    setFqAction(`下载《${b.name}》中…`);
+    try {
+      const msg = await api.fqDownload(b.book_id, path, (ev) => {
+        if (ev.type === "progress") {
+          setFqProgress(`下载中 ${ev.current}/${ev.total}：${ev.label}`);
+        } else if (ev.type === "error") {
+          setError(ev.message);
+        }
+      });
+      setFqInfo(msg);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setFqAction(null);
+      setFqProgress(null);
+    }
   };
 
   return (
@@ -183,7 +511,7 @@ export function StylesView({
         <div className="mt-5 flex gap-2">
           <button
             className="flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
-            onClick={() => setGenOpen(true)}
+            onClick={openGen}
           >
             <svg viewBox="0 0 12 12" className="h-3 w-3">
               <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.8" />
@@ -191,12 +519,20 @@ export function StylesView({
             对话生成风格
           </button>
           {tab === "text" && (
-            <button
-              className="flex items-center gap-1.5 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
-              onClick={() => setDistillOpen(true)}
-            >
-              上传小说蒸馏
-            </button>
+            <>
+              <button
+                className="flex items-center gap-1.5 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+                onClick={() => setDistillOpen(true)}
+              >
+                上传小说蒸馏
+              </button>
+              <button
+                className="flex items-center gap-1.5 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+                onClick={() => setFqOpen(true)}
+              >
+                番茄搜书
+              </button>
+            </>
           )}
         </div>
 
@@ -257,6 +593,13 @@ export function StylesView({
                       </button>
                     ))}
                   <button
+                    title="在对话中调整优化这张卡"
+                    onClick={() => openEdit(s)}
+                    className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                  >
+                    对话优化
+                  </button>
+                  <button
                     title="删除风格"
                     onClick={() => void removeStyle(s.id)}
                     className="text-faint hover:text-pred-t"
@@ -285,81 +628,221 @@ export function StylesView({
         </div>
       </div>
 
-      {/* 对话生成弹层 */}
+      {/* 对话生成弹层：左侧多轮对话，右侧风格卡面板（同 AI 起书向导的交互） */}
       {genOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
           onClick={() => setGenOpen(false)}
         >
-          <div className="mx-4" onClick={(e) => e.stopPropagation()}>
-        {/* 对话生成风格（三类页签共用，kind 跟随页签） */}
-        <div className="w-full max-w-lg rounded-2xl bg-surface p-5 shadow-float">
-          <div className="flex items-center">
-            <p className="text-[13px] font-semibold text-ink">对话生成风格</p>
-            <button
-              className="ml-auto text-faint hover:text-body"
-              onClick={() => setGenOpen(false)}
-            >
-              ×
-            </button>
-          </div>
-          <div className="mt-2 flex gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
-              placeholder={ideaPlaceholder}
-              value={idea}
-              onChange={(e) => setIdea(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void genCard(false)}
-            />
-            <button
-              disabled={cardBusy || !idea.trim()}
-              onClick={() => void genCard(false)}
-              className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
-            >
-              {cardBusy && !cardPreview ? "生成中…" : "生成风格卡"}
-            </button>
-          </div>
-          {cardPreview && (
-            <div className="mt-3">
-              <p className="whitespace-pre-wrap rounded-xl bg-canvas px-3.5 py-3 text-[13px] leading-6 text-body">
-                {cardPreview}
+          <div
+            className="mx-4 flex h-[82vh] w-full max-w-4xl flex-col rounded-2xl bg-surface shadow-float"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center px-5 pt-4">
+              <p className="text-[14px] font-semibold text-ink">
+                {editStyleId != null ? "对话优化风格" : "对话生成风格"}
               </p>
-              <div className="mt-2 flex gap-2">
-                <input
-                  className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
-                  placeholder="微调，如：句子再短一点，对话再多些"
-                  value={tweak}
-                  disabled={cardBusy}
-                  onChange={(e) => setTweak(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void genCard(true)}
-                />
+              <span className="ml-2 text-[11px] text-faint">
+                {tab === "text"
+                  ? "写作风格卡"
+                  : tab === "image"
+                    ? "画风锚点词"
+                    : "运镜锚点词"}
+                ·聊清楚再出卡，可边聊边改；会话自动保存
+              </span>
+              <div className="ml-auto flex items-center gap-2">
                 <button
-                  disabled={cardBusy || !tweak.trim()}
-                  onClick={() => void genCard(true)}
-                  className="shrink-0 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                  className="rounded-full bg-card/70 px-3 py-1 text-[12px] text-body shadow-card transition-colors hover:bg-surface2"
+                  onClick={() => void toggleGenHistory()}
                 >
-                  {cardBusy ? "调整中…" : "调整"}
+                  历史
                 </button>
-              </div>
-              <div className="mt-2 flex gap-2">
-                <input
-                  className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
-                  placeholder="风格名称"
-                  value={cardName}
-                  onChange={(e) => setCardName(e.target.value)}
-                />
                 <button
-                  disabled={!cardName.trim()}
-                  onClick={() => void saveCard()}
-                  className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+                  className="rounded-full bg-card/70 px-3 py-1 text-[12px] text-body shadow-card transition-colors hover:bg-surface2"
+                  onClick={startFreshGen}
+                  title="当前会话自动归档到历史，可回看"
                 >
-                  保存到风格库
+                  新会话
+                </button>
+                <button
+                  className="text-faint hover:text-body"
+                  onClick={() => setGenOpen(false)}
+                >
+                  ×
                 </button>
               </div>
             </div>
-          )}
-        </div>
 
+            {/* 历史会话面板（只列当前页签类型的会话） */}
+            {visibleHistory != null && (
+              <div className="mx-5 mt-2.5 max-h-36 shrink-0 overflow-y-auto rounded-2xl bg-canvas p-2.5">
+                {visibleHistory.length === 0 && (
+                  <p className="py-2.5 text-center text-xs text-faint">
+                    还没有历史会话
+                  </p>
+                )}
+                {visibleHistory.map((s) => (
+                  <div
+                    key={s.id}
+                    className={`flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2 transition-colors hover:bg-surface ${
+                      s.id === sessionId ? "bg-surface" : ""
+                    }`}
+                    onClick={() => loadGenSession(s)}
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-body">
+                      {s.title}
+                    </span>
+                    {s.draft && (
+                      <span className="rounded-full bg-accent-soft px-2 py-px text-[10px] text-accent">
+                        有风格卡
+                      </span>
+                    )}
+                    <span className="text-[10px] text-faint">
+                      {new Date(s.updated_at * 1000).toLocaleString("zh-CN", {
+                        month: "numeric",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <button
+                      className="text-faint hover:text-pred-t"
+                      title="删除这条会话"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void api.deleteChatSession(s.id).then(() => {
+                          setHistory(
+                            (h) => h?.filter((x) => x.id !== s.id) ?? null,
+                          );
+                          // 删的是当前会话：重置 id，下次归档另起一行
+                          if (s.id === sessionId) setSessionId(null);
+                        });
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-3 flex min-h-0 flex-1 gap-3 px-5 pb-5">
+              {/* 左：对话 */}
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div
+                  ref={genChatRef}
+                  className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-2xl bg-canvas p-4"
+                >
+                  {genMessages.map((m, i) => (
+                    <div
+                      key={i}
+                      className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 ${
+                        m.role === "ai"
+                          ? "self-start bg-surface text-body shadow-card"
+                          : "self-end whitespace-pre-wrap bg-accent text-surface"
+                      }`}
+                    >
+                      {m.role === "ai" ? (
+                        m.text ? (
+                          <AiMarkdown text={m.text} />
+                        ) : genBusy && i === genMessages.length - 1 ? (
+                          "…"
+                        ) : null
+                      ) : (
+                        m.text
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2.5 flex shrink-0 gap-2">
+                  <input
+                    className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2.5 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+                    placeholder="描述你想要的风格，或回复它的问题…"
+                    value={genInput}
+                    disabled={genBusy}
+                    onChange={(e) => setGenInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void sendGen(genInput)}
+                  />
+                  <button
+                    disabled={genBusy || !genInput.trim()}
+                    onClick={() => void sendGen(genInput)}
+                    className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+                  >
+                    发送
+                  </button>
+                  <button
+                    disabled={genBusy}
+                    title="跳过问答，按现有描述直接出卡"
+                    onClick={() => void sendGen("信息够了，直接生成风格卡")}
+                    className="shrink-0 rounded-full bg-card/70 px-3.5 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                  >
+                    直接生成
+                  </button>
+                </div>
+                {error && (
+                  <p className="mt-2.5 shrink-0 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
+                    {error}
+                  </p>
+                )}
+              </div>
+
+              {/* 右：风格卡面板（可编辑，保存入库） */}
+              <div className="flex w-[320px] shrink-0 flex-col rounded-2xl bg-canvas p-4">
+                <p className="shrink-0 text-xs font-medium text-muted">风格卡</p>
+                {cardPreview == null ? (
+                  <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center">
+                    {cardGenerating ? (
+                      <p className="text-[12px] leading-6 text-faint">
+                        <span className="mb-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                        <br />
+                        风格卡生成中，生成完自动填充…
+                      </p>
+                    ) : (
+                      <p className="text-[12px] leading-6 text-faint">
+                        聊清楚后，风格卡会出现在这里；
+                        <br />
+                        出卡后继续聊，可以反复微调
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <textarea
+                      className="mt-2 min-h-0 flex-1 resize-none rounded-[10px] bg-surface px-3 py-2.5 text-[12px] leading-6 text-body outline-none focus:bg-surface2"
+                      value={cardPreview}
+                      onChange={(e) => setCardPreview(e.target.value)}
+                    />
+                    <input
+                      className="mt-2 shrink-0 rounded-[10px] bg-surface px-3 py-2 text-[13px] text-ink outline-none placeholder:text-faint focus:bg-surface2"
+                      placeholder="风格名称"
+                      value={cardName}
+                      onChange={(e) => setCardName(e.target.value)}
+                    />
+                    <button
+                      disabled={!cardName.trim() || !cardPreview.trim()}
+                      onClick={() => void saveCard()}
+                      className="mt-2 shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+                    >
+                      {editStyleId != null ? "保存修改" : "保存到风格库"}
+                    </button>
+                    {editStyleId != null && (
+                      <button
+                        disabled={!cardName.trim() || !cardPreview.trim()}
+                        onClick={() => void saveAsNew()}
+                        className="mt-2 shrink-0 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                      >
+                        另存为新卡（原卡不动）
+                      </button>
+                    )}
+                    <p className="mt-1.5 shrink-0 text-[10px] leading-4 text-faint">
+                      {editStyleId != null
+                        ? "保存修改会直接覆盖原风格卡；想保留原卡就点另存为新卡"
+                        : "卡内容可直接编辑；继续对话微调会出新卡覆盖"}
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -433,6 +916,115 @@ export function StylesView({
           )}
         </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* 番茄在线搜书弹层：搜索 → 直接蒸馏 / 下载 txt */}
+      {fqOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={() => setFqOpen(false)}
+        >
+          <div
+            className="mx-4 flex max-h-[80vh] w-full max-w-xl flex-col rounded-2xl bg-surface p-5 shadow-float"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center">
+              <p className="text-[14px] font-semibold text-ink">番茄在线搜书</p>
+              <button
+                className="ml-auto text-faint hover:text-body"
+                onClick={() => setFqOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-3 flex shrink-0 gap-2">
+              <input
+                className="min-w-0 flex-1 rounded-[10px] bg-canvas px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:bg-surface2"
+                placeholder="书名 / 作者关键词"
+                value={fqQuery}
+                onChange={(e) => setFqQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void fqDoSearch()}
+              />
+              <button
+                disabled={fqBusy || !fqQuery.trim()}
+                onClick={() => void fqDoSearch()}
+                className="shrink-0 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+              >
+                {fqBusy ? "搜索中…" : "搜索"}
+              </button>
+            </div>
+            <p className="mt-2 shrink-0 text-[11px] leading-4 text-faint">
+              内容来自番茄小说公开接口，仅供个人学习与风格分析，请勿传播或商用；蒸馏只抓开头几章样本
+            </p>
+
+            {(fqAction || fqProgress) && (
+              <p className="mt-2 shrink-0 rounded-xl bg-accent-soft px-3.5 py-2.5 text-xs text-accent">
+                {fqProgress ?? fqAction}
+              </p>
+            )}
+            {fqInfo && !fqAction && (
+              <p className="mt-2 shrink-0 rounded-xl bg-pgreen px-3.5 py-2.5 text-xs text-pgreen-t">
+                {fqInfo}
+              </p>
+            )}
+            {error && (
+              <p className="mt-2 shrink-0 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
+                {error}
+              </p>
+            )}
+
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+              {fqResults == null ? (
+                <p className="py-10 text-center text-[13px] text-faint">
+                  搜一本想研究风格的书，如「十日终焉」
+                </p>
+              ) : fqResults.length === 0 ? (
+                <p className="py-10 text-center text-[13px] text-faint">
+                  没有找到，换个关键词试试
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {fqResults.map((b) => (
+                    <div key={b.book_id} className="rounded-2xl bg-canvas p-3.5">
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-[14px] font-bold text-ink">
+                          《{b.name}》
+                        </span>
+                        <span className="shrink-0 text-[11px] text-muted">
+                          {b.author}
+                          {b.category && ` · ${b.category}`}
+                          {b.word_number > 0 &&
+                            ` · ${(b.word_number / 10000).toFixed(0)} 万字`}
+                        </span>
+                      </div>
+                      {b.abstract && (
+                        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted">
+                          {b.abstract}
+                        </p>
+                      )}
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          disabled={fqAction != null}
+                          onClick={() => void fqDistill(b)}
+                          className="rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+                        >
+                          蒸馏风格
+                        </button>
+                        <button
+                          disabled={fqAction != null}
+                          onClick={() => void fqDownloadBook(b)}
+                          className="rounded-full bg-card/70 px-3.5 py-1.5 text-[12px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                        >
+                          下载 txt
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

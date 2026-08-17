@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { IMAGE_PRESETS } from "../lib/stylePresets";
-import { LORE_CATEGORIES, type LoreEntry, type Style } from "../types";
+import { LORE_CATEGORIES, type LoreChange, type LoreEntry, type Style } from "../types";
 interface LoreEditorProps {
   entry: LoreEntry;
   onSaved: () => void;
@@ -23,6 +23,15 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
   const [refBusy, setRefBusy] = useState(false);
   const [imgStyle, setImgStyle] = useState(""); // 设定图画风锚点词
   const [myImageStyles, setMyImageStyles] = useState<Style[]>([]);
+
+  // 变更记录（AI 从章节提取的台账，只读）
+  const [entryChanges, setEntryChanges] = useState<LoreChange[]>([]);
+  useEffect(() => {
+    void api
+      .listLoreChanges(entry.project_id, entry.id, entry.title)
+      .then(setEntryChanges)
+      .catch(() => setEntryChanges([]));
+  }, [entry.id, entry.project_id, entry.title]);
 
   useEffect(() => {
     void api
@@ -178,7 +187,7 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
             </div>
           )}
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 disabled={refBusy}
                 className="rounded-full bg-card/70 px-3 py-1 text-xs text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
@@ -205,26 +214,29 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
                   移除
                 </button>
               )}
-              <select
-                className="rounded-full bg-card/70 px-2.5 py-1 text-[11px] text-muted shadow-card outline-none"
-                value={imgStyle}
-                onChange={(e) => setImgStyle(e.target.value)}
-                title="生成设定图时追加的画风"
-              >
-                <option value="">默认画风</option>
-                {[
-                  ...IMAGE_PRESETS.map((p) => ({ key: `p:${p.name}`, ...p })),
-                  ...myImageStyles.map((x) => ({
-                    key: `u:${x.id}`,
-                    name: x.name,
-                    guide: x.guide,
-                  })),
-                ].map((o) => (
-                  <option key={o.key} value={o.guide}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
+              <span className="ml-1 flex items-center gap-1.5 rounded-full bg-card/70 py-1 pl-3 pr-1.5 text-[11px] text-faint shadow-card">
+                画风
+                <select
+                  className="max-w-40 cursor-pointer rounded-full bg-surface px-2 py-0.5 text-[11px] text-body shadow-card outline-none"
+                  value={imgStyle}
+                  onChange={(e) => setImgStyle(e.target.value)}
+                  title="AI 生成设定图时追加的画风（风格库 image 卡/内置预设）"
+                >
+                  <option value="">默认画风</option>
+                  {[
+                    ...IMAGE_PRESETS.map((p) => ({ key: `p:${p.name}`, ...p })),
+                    ...myImageStyles.map((x) => ({
+                      key: `u:${x.id}`,
+                      name: x.name,
+                      guide: x.guide,
+                    })),
+                  ].map((o) => (
+                    <option key={o.key} value={o.guide}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+              </span>
             </div>
             <p className="mt-1.5 text-[11px] leading-4 text-faint">
               视频分镜生图/图生视频时，命中该词条会自动带上参考图（最多 3
@@ -245,6 +257,47 @@ export function LoreEditor({ entry, onSaved }: LoreEditorProps) {
           <p className="mt-2 text-xs text-faint">
             写得越具体，AI 续写时人设越稳。修改会自动保存。
           </p>
+
+          {/* 变更记录：该条目在哪些章被改过（台账的条目维度视图，只读） */}
+          {entryChanges.length > 0 && (
+            <div className="mt-4 pb-6">
+              <p className="text-xs font-medium text-muted">
+                变更记录
+                <span className="ml-1.5 font-normal text-faint">
+                  AI 从章节自动提取，只读
+                </span>
+              </p>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {entryChanges.map((c) => {
+                  const meta = (
+                    {
+                      new: { label: "登场", cls: "bg-pgreen text-pgreen-t" },
+                      update: { label: "变更", cls: "bg-pyellow text-pyellow-t" },
+                      retire: { label: "退场", cls: "bg-pred text-pred-t" },
+                    } as const
+                  )[c.kind] ?? { label: "变更", cls: "bg-pyellow text-pyellow-t" };
+                  return (
+                    <div
+                      key={c.id}
+                      className="flex items-baseline gap-2 rounded-xl bg-surface px-3 py-2 shadow-card"
+                    >
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-px text-[10px] font-medium ${meta.cls}`}
+                      >
+                        {meta.label}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-faint">
+                        {c.chapter_title}
+                      </span>
+                      <span className="min-w-0 text-[12px] leading-5 text-body">
+                        {c.detail}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

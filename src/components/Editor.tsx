@@ -3,7 +3,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor as TiptapEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { api, type StreamEvent } from "../lib/api";
-import type { Chapter } from "../types";
+import type { Chapter, OutlineItem } from "../types";
 
 interface EditorProps {
   chapter: Chapter;
@@ -15,6 +15,10 @@ interface EditorProps {
   initialScroll?: number;
   /** 滚动位置上报（节流），用于按书籍记住阅读位置 */
   onScrollPos?: (top: number) => void;
+  /** 大纲节点（卷）；有大纲时元信息行显示「所属卷」选择器 */
+  outlineItems?: OutlineItem[];
+  /** 调整章节所属卷（0 = 未分卷） */
+  onChangeVolume?: (outlineItemId: number) => void;
 }
 
 interface SelInfo {
@@ -44,7 +48,7 @@ function makeInserter(ed: TiptapEditor, startPos: number) {
   };
 }
 
-export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onScrollPos }: EditorProps) {
+export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onScrollPos, outlineItems, onChangeVolume }: EditorProps) {
   const [title, setTitle] = useState(chapter.title);
   const titleRef = useRef(title);
   titleRef.current = title;
@@ -342,6 +346,29 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onSc
           <div className="mt-3 flex items-center gap-2.5 text-xs text-muted">
             <span>{wordCount} 字</span>
             <span className="text-faint">·</span>
+            {outlineItems && outlineItems.length > 0 && (
+              <>
+                <span className="flex items-center gap-1">
+                  卷
+                  <select
+                    className="max-w-44 cursor-pointer truncate rounded-lg bg-transparent px-1 py-0.5 text-body outline-none hover:bg-hover"
+                    title="本章所属卷（卷 = 大纲节点）"
+                    value={chapter.outline_item_id}
+                    onChange={(e) =>
+                      onChangeVolume?.(parseInt(e.target.value, 10))
+                    }
+                  >
+                    <option value={0}>未分卷</option>
+                    {outlineItems.map((o, i) => (
+                      <option key={o.id} value={o.id}>
+                        第{i + 1}卷 · {o.title}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+                <span className="text-faint">·</span>
+              </>
+            )}
             <button
               className="hover:text-body"
               onClick={() => setSummaryOpen((v) => !v)}

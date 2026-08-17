@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
-import type { BootstrapChatReply, BootstrapDraft, Chapter, ChapterMeta, ChatMsg, ChatSession, CheckReportMeta, LoreEntry, OutlineItem, Project, ScanHit, ScopeItem, Style, Task, Video, VideoDetail } from "../types";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import type { Chapter, ChapterMeta, ChatMsg, ChatSession, CheckReportMeta, FqBook, FqSample, LoreChange, LoreEntry, OutlineItem, Project, ScanHit, ScopeItem, Style, Task, Video, VideoDetail } from "../types";
 
 /** 无边框窗口的自制标题栏控制 */
 const appWindow = getCurrentWindow();
@@ -90,8 +90,13 @@ export const api = {
   addOutlineItem: (projectId: number, title: string) =>
     invoke<OutlineItem>("add_outline_item", { projectId, title }),
 
-  saveOutlineItem: (id: number, title: string, content: string) =>
-    invoke<void>("save_outline_item", { id, title, content }),
+  saveOutlineItem: (
+    id: number,
+    title: string,
+    content: string,
+    targetChapters?: number
+  ) =>
+    invoke<void>("save_outline_item", { id, title, content, targetChapters }),
 
   setOutlineStatus: (id: number, status: string) =>
     invoke<void>("set_outline_status", { id, status }),
@@ -115,6 +120,33 @@ export const api = {
       multiple: false,
       filters: [{ name: "音频", extensions: ["mp3", "wav", "m4a", "aac", "ogg"] }],
     }),
+
+  /** 选择 txt 保存路径，取消返回 null */
+  saveTextPath: (defaultName: string) =>
+    save({
+      defaultPath: defaultName,
+      filters: [{ name: "文本文件", extensions: ["txt"] }],
+    }),
+
+  // ---------- 番茄在线搜书（仅供个人学习与风格分析） ----------
+
+  /** 在线搜索番茄小说（公开中继 API） */
+  fqSearch: (query: string) => invoke<FqBook[]>("fq_search", { query }),
+
+  /** 抓蒸馏样本：从第 1 章顺序抓到约 1.5 万字 */
+  fqDistillSample: (bookId: string) =>
+    invoke<FqSample>("fq_distill_sample", { bookId }),
+
+  /** 下载全本为 txt（进度事件；失败章节留占位行不中断），返回结果说明 */
+  fqDownload: (
+    bookId: string,
+    path: string,
+    onEvent: (event: ProgressEvent) => void
+  ) => {
+    const channel = new Channel<ProgressEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("fq_download", { bookId, path, channel });
+  },
 
   /** 选择片头/片尾素材（视频或图片），取消返回 null */
   pickMedia: () =>
@@ -189,9 +221,6 @@ export const api = {
   listCovers: (projectId: number) =>
     invoke<string[]>("list_covers", { projectId }),
 
-  /** 读封面文件为 data URL */
-  getCoverData: (path: string) => invoke<string>("get_cover_data", { path }),
-
   /** (总章节数, 已有摘要数) */
   summaryStats: (projectId: number) =>
     invoke<[number, number]>("summary_stats", { projectId }),
@@ -262,9 +291,31 @@ export const api = {
   saveSummary: (id: number, summary: string) =>
     invoke<void>("save_summary", { id, summary }),
 
+  /** 手动调整章节所属卷（0 = 未分卷） */
+  setChapterVolume: (chapterId: number, outlineItemId: number) =>
+    invoke<void>("set_chapter_volume", { chapterId, outlineItemId }),
+
   /** 生成章节摘要（后端存库并返回摘要文本） */
   generateSummary: (chapterId: number) =>
     invoke<string>("generate_summary", { chapterId }),
+
+  // ---------- 设定变更台账 ----------
+
+  /** 手动提取某章的设定变更（重复提取幂等），返回变更条数 */
+  extractLoreChanges: (chapterId: number) =>
+    invoke<number>("extract_lore_changes", { chapterId }),
+
+  /** 台账列表（entryId/entryTitle 给值时按条目过滤，条目时间线用） */
+  listLoreChanges: (
+    projectId: number,
+    entryId?: number,
+    entryTitle?: string
+  ) =>
+    invoke<LoreChange[]>("list_lore_changes", {
+      projectId,
+      entryId,
+      entryTitle,
+    }),
 
   /** 导出整部作品为 txt，返回写入路径 */
   exportProject: (projectId: number, path: string) =>
@@ -412,23 +463,31 @@ export const api = {
 
   deleteStyle: (id: number) => invoke<void>("delete_style", { id }),
 
-  /** 对话生成风格卡（带 previousGuide + tweak 时为微调） */
-  generateStyleCard: (
-    guidance: string,
-    previousGuide?: string,
-    tweak?: string,
-    kind?: "text" | "image" | "video"
-  ) =>
-    invoke<string>("generate_style_card", {
-      guidance,
-      previousGuide,
-      tweak,
-      kind,
-    }),
-
   /** 保存对话生成的风格卡 */
   saveStyleCard: (name: string, source: string, guide: string, kind?: string) =>
     invoke<Style>("save_style_card", { name, source, guide, kind }),
+
+  /** 对话式风格定制（流式）：多轮问答，AI 出卡时回复带 [CARD] 标记，由前端解析；
+   *  baseCard 有值时为「优化现有风格」模式（现有卡垫作上下文） */
+  generateStyleCardStream: (
+    messages: ChatMsg[],
+    kind: "text" | "image" | "video",
+    baseCard: string | undefined,
+    onEvent: (event: StreamEvent) => void
+  ) => {
+    const channel = new Channel<StreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("generate_style_card_stream", {
+      messages,
+      kind,
+      baseCard,
+      channel,
+    });
+  },
+
+  /** 更新现有风格卡（对话优化后保存修改） */
+  updateStyle: (id: number, name: string, guide: string) =>
+    invoke<void>("update_style", { id, name, guide }),
 
   // ---------- 发布（番茄作家后台，fill-only） ----------
 
@@ -445,14 +504,6 @@ export const api = {
   /** 把视频文案（标题+话题）填进抖音上传页（视频文件人工拖入） */
   fillDouyinCaption: (videoId: number) =>
     invoke<string>("fill_douyin_caption", { videoId }),
-
-  /** AI 起书：一句话创意 → 书名/简介/初始设定草稿 */
-  aiBootstrapDraft: (idea: string) =>
-    invoke<BootstrapDraft>("ai_bootstrap_draft", { idea }),
-
-  /** 对话式起书：多轮对话，AI 提问引导，信息够了自动带草稿 */
-  aiBootstrapChat: (messages: ChatMsg[]) =>
-    invoke<BootstrapChatReply>("ai_bootstrap_chat", { messages }),
 
   /** 对话式起书（流式）：delta 实时推送；[DRAFT] 草稿由前端在 done 后解析 */
   aiBootstrapChatStream: (
@@ -512,28 +563,27 @@ export const api = {
   /** 敏感词合规扫描（纯文本检索） */
   scanBannedWords: (projectId: number, words: string[]) =>
     invoke<ScanHit[]>("scan_banned_words", { projectId, words }),
-  // ---------- 起书会话归档 ----------
+  // ---------- 会话归档（起书向导 bootstrap / 风格对话 style 共用） ----------
 
-  /** 保存起书会话（id=null 新建），返回会话 id */
+  /** 保存会话（id=null 新建），返回会话 id；scene 默认 bootstrap */
   saveChatSession: (
     id: number | null,
     title: string,
     messages: string,
-    draft: string
-  ) => invoke<number>("save_chat_session", { id, title, messages, draft }),
+    draft: string,
+    scene?: "bootstrap" | "style"
+  ) => invoke<number>("save_chat_session", { id, title, messages, draft, scene }),
 
-  /** 最近一条会话（进入向导恢复用） */
-  getLatestChatSession: () =>
-    invoke<ChatSession | null>("get_latest_chat_session"),
+  /** 最近一条会话（按场景过滤，进入向导/风格对话恢复用） */
+  getLatestChatSession: (scene?: "bootstrap" | "style") =>
+    invoke<ChatSession | null>("get_latest_chat_session", { scene }),
 
-  listChatSessions: () => invoke<ChatSession[]>("list_chat_sessions"),
+  listChatSessions: (scene?: "bootstrap" | "style") =>
+    invoke<ChatSession[]>("list_chat_sessions", { scene }),
 
   deleteChatSession: (id: number) =>
     invoke<void>("delete_chat_session", { id }),
 
-  /** AI 润色创意：一句话创意 → 更具体的创作 brief */
-  aiPolishIdea: (idea: string) => invoke<string>("ai_polish_idea", { idea }),
-
-  /** 本地文件 → 预览 URL（asset 协议，视频用；图片用 getCoverData 的 data URL） */
+  /** 本地文件 → 预览 URL（asset 协议，视频用；图片/视频帧都走 asset 协议） */
   fileUrl: (path: string) => convertFileSrc(path),
 };

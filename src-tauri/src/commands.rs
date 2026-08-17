@@ -523,16 +523,6 @@ pub fn list_covers(app: AppHandle, project_id: i64) -> Result<Vec<String>, Strin
     Ok(files)
 }
 
-/// 读取封面文件为 data URL（供前端预览）
-#[tauri::command]
-pub fn get_cover_data(path: String) -> Result<String, String> {
-    let bytes = std::fs::read(&path).map_err(|e| format!("读取封面失败: {e}"))?;
-    Ok(format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
-}
-
 // ---------- AI ----------
 
 /// 带给前文的最多字符数
@@ -678,8 +668,12 @@ pub(crate) fn style_section(db: &Db, project_id: i64) -> Option<(String, String)
 /// 大纲注入的字符预算
 const MAX_OUTLINE_CHARS: usize = 600;
 
-/// 全书大纲区块：节点名 + 状态，首个未完成节点标记为当前进度
-fn build_outline_section(items: &[OutlineItem]) -> String {
+/// 全书大纲区块：节点名 + 状态，首个未完成节点标记为当前进度（带本卷已写章数）。
+/// 卷 = 大纲节点；章数进度 + 收尾节奏纪律是给 AI 的节拍器，防少数几章冲完一卷
+fn build_outline_section(
+    items: &[OutlineItem],
+    counts: &std::collections::HashMap<i64, i64>,
+) -> String {
     if items.is_empty() {
         return String::new();
     }
@@ -687,11 +681,16 @@ fn build_outline_section(items: &[OutlineItem]) -> String {
     let mut out = String::new();
     for (i, item) in items.iter().enumerate() {
         let mark = if Some(i) == first_planned {
-            " ◀当前"
+            let n = counts.get(&item.id).copied().unwrap_or(0);
+            if item.target_chapters > 0 {
+                format!(" ◀当前卷（已写 {n} 章 / 全卷预计约 {} 章）", item.target_chapters)
+            } else {
+                format!(" ◀当前卷（已写 {n} 章）")
+            }
         } else if item.status == "done" {
-            "【已完成】"
+            "【已完成】".to_string()
         } else {
-            ""
+            String::new()
         };
         let line = format!("{}. {}{}\n", i + 1, item.title, mark);
         if out.len() + line.len() > MAX_OUTLINE_CHARS {
@@ -699,6 +698,23 @@ fn build_outline_section(items: &[OutlineItem]) -> String {
             break;
         }
         out.push_str(&line);
+    }
+    // 节奏提示：有预估章数时按进度分阶段（铺陈/中段/收尾），没有就给通用纪律
+    if let Some(fp) = first_planned {
+        let cur = &items[fp];
+        let n = counts.get(&cur.id).copied().unwrap_or(0);
+        if cur.target_chapters > 0 {
+            let phase = if n * 10 < cur.target_chapters * 5 {
+                "铺陈期：逐步升级冲突、埋设本卷看点，远未到收束时"
+            } else if n * 10 < cur.target_chapters * 8 {
+                "中段：保持升级节奏，阻力源持续加码"
+            } else {
+                "收尾阶段：开始收束本卷核心冲突、兑现高潮，为下一卷留钩子"
+            };
+            out.push_str(&format!("本卷节奏：{phase}。\n"));
+        } else {
+            out.push_str("节奏纪律：一卷通常铺几十章，按当前卷的阶段目标逐步升级冲突，不要提前写完本卷核心矛盾。\n");
+        }
     }
     out
 }
@@ -729,7 +745,10 @@ pub async fn ai_continue(
 
     // 大纲注入：全书节点 + 当前进度标记（管控整本书的走向）
     let outline = db.list_outline(chapter.project_id).unwrap_or_default();
-    let outline_section = build_outline_section(&outline);
+    let outline_counts = db
+        .count_chapters_by_outline(chapter.project_id)
+        .unwrap_or_default();
+    let outline_section = build_outline_section(&outline, &outline_counts);
 
     // 写作风格注入（创建作品时选定的风格卡）
     let style = style_section(&db, chapter.project_id);
@@ -876,7 +895,7 @@ pub async fn ai_transform(
     .map_err(|e| e.to_string())
 }
 
-/// 生成章节摘要（非流式），存库并返回
+/// 生成章节摘要（非流式），存库并返回；顺带提取本章设定变更进台账（失败不影响摘要）
 #[tauri::command]
 pub async fn generate_summary(db: State<'_, Db>, chapter_id: i64) -> Result<String, String> {
     let chapter = db.get_chapter(chapter_id).map_err(|e| e.to_string())?;
@@ -885,6 +904,9 @@ pub async fn generate_summary(db: State<'_, Db>, chapter_id: i64) -> Result<Stri
     let summary = summarize_chapter_text(&cfg, &chapter.title, &plain).await?;
     db.save_summary(chapter_id, &summary)
         .map_err(|e| e.to_string())?;
+    if let Err(e) = extract_chapter_lore_changes(&db, &cfg, chapter_id).await {
+        eprintln!("设定变更提取失败（章节 {chapter_id}）: {e}");
+    }
     Ok(summary)
 }
 
@@ -1015,6 +1037,10 @@ pub async fn generate_missing_summaries(
                     });
                     return Ok(());
                 }
+                // 顺带提取设定变更进台账（失败继续下一章）
+                if let Err(e) = extract_chapter_lore_changes(&db, &cfg, ch.id).await {
+                    eprintln!("设定变更提取失败（章节 {}）: {e}", ch.id);
+                }
             }
             Err(e) => {
                 let _ = channel.send(ProgressEvent::Error {
@@ -1031,6 +1057,141 @@ pub async fn generate_missing_summaries(
     });
     let _ = channel.send(ProgressEvent::Done);
     Ok(())
+}
+
+// ---------- 设定变更台账 ----------
+
+const LORE_CHANGES_SYSTEM: &str = "你是小说设定管理员。阅读章节内容，找出其中对设定状态产生持久变更的事实：\
+新登场的人物/地点/物品/伏笔，已有设定的状态变化（获得/失去/境界提升/区域解锁/关系破裂…），设定退场或失效。\
+只输出 JSON 数组，每项：\
+{\"entry_title\": \"条目名（与给定设定库条目保持一致；新事物用简洁命名）\", \
+\"category\": \"人物/世界观/地点/物品/伏笔/其他\", \
+\"kind\": \"new|update|retire\", \
+\"detail\": \"一句话说明本章造成的变更\"}。\
+打完就结束的战斗、一次性对话等过程性事件不算设定变更；没有持久变更就输出 []。\
+只输出 JSON，不要解释。";
+
+#[derive(Debug, serde::Deserialize)]
+struct RawLoreChange {
+    entry_title: Option<String>,
+    category: Option<String>,
+    kind: Option<String>,
+    detail: Option<String>,
+}
+
+/// 从章节提取设定变更（共享实现：手动命令 + 摘要链路自动挂载）。
+/// 产出整章替换（重复提取幂等）；返回条数
+async fn extract_chapter_lore_changes(
+    db: &Db,
+    cfg: &LlmConfig,
+    chapter_id: i64,
+) -> Result<usize, String> {
+    let chapter = db.get_chapter(chapter_id).map_err(|e| e.to_string())?;
+    let plain = db::html_to_text(&chapter.content);
+    if plain.trim().is_empty() {
+        return Ok(0);
+    }
+    let excerpt = chapter_excerpt(&plain);
+
+    // 带上现有条目清单，AI 才能把变更归到已有条目而不是重复"新登场"
+    let entries = db.list_lore_entries(chapter.project_id).unwrap_or_default();
+    let lore_brief = head_chars(
+        &entries
+            .iter()
+            .filter(|e| e.enabled)
+            .map(|e| {
+                format!(
+                    "◆ {}（{}）{}",
+                    e.title,
+                    e.category,
+                    head_chars(e.content.trim(), 80)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        1500,
+    );
+
+    let raw = llm::chat_once(
+        cfg.clone(),
+        vec![
+            ("system".to_string(), LORE_CHANGES_SYSTEM.to_string()),
+            (
+                "user".to_string(),
+                format!(
+                    "【本章《{}》内容】\n{}\n\n【现有设定条目】\n{}",
+                    chapter.title,
+                    excerpt,
+                    if lore_brief.is_empty() { "（暂无）" } else { &lore_brief }
+                ),
+            ),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 宽容解析：找不到 JSON 数组 / 解析失败就当无变更（自动链路不报错）
+    let start = raw.find('[');
+    let end = raw.rfind(']');
+    let parsed: Vec<RawLoreChange> = match (start, end) {
+        (Some(s), Some(e)) if e > s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    const VALID_CATS: [&str; 6] = ["人物", "世界观", "地点", "物品", "伏笔", "其他"];
+    let rows: Vec<db::NewLoreChange> = parsed
+        .into_iter()
+        .filter_map(|r| {
+            let title = r.entry_title?.trim().to_string();
+            let detail = r.detail.unwrap_or_default().trim().to_string();
+            if title.is_empty() || detail.is_empty() {
+                return None;
+            }
+            let category = r.category.unwrap_or_default().trim().to_string();
+            let kind = match r.kind.as_deref().map(str::trim) {
+                Some("new") => "new",
+                Some("retire") => "retire",
+                _ => "update",
+            };
+            let entry_id = entries
+                .iter()
+                .find(|e| e.title.trim() == title)
+                .map(|e| e.id);
+            Some(db::NewLoreChange {
+                entry_id,
+                entry_title: title,
+                category: if VALID_CATS.contains(&category.as_str()) {
+                    category
+                } else {
+                    "其他".to_string()
+                },
+                kind: kind.to_string(),
+                detail,
+            })
+        })
+        .collect();
+    let count = rows.len();
+    db.replace_lore_changes(chapter.project_id, chapter_id, &rows)
+        .map_err(|e| e.to_string())?;
+    Ok(count)
+}
+
+/// 手动提取某章的设定变更（台账视图「提取本章/补齐全部」按钮），返回变更条数
+#[tauri::command]
+pub async fn extract_lore_changes(db: State<'_, Db>, chapter_id: i64) -> Result<usize, String> {
+    let cfg = load_llm_config(&db);
+    extract_chapter_lore_changes(&db, &cfg, chapter_id).await
+}
+
+/// 台账列表（entry_id/entry_title 给值时按条目过滤，条目时间线用）
+#[tauri::command]
+pub fn list_lore_changes(
+    db: State<'_, Db>,
+    project_id: i64,
+    entry_id: Option<i64>,
+    entry_title: Option<String>,
+) -> Result<Vec<db::LoreChangeRow>, String> {
+    db.list_lore_changes(project_id, entry_id, entry_title.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 /// 批量写章执行器（任务队列 kind = batch_chapters）。
@@ -1130,7 +1291,8 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
             .unwrap_or_default();
         let summary_section = build_summary_section(&summaries);
         let outline = db.list_outline(project_id).unwrap_or_default();
-        let outline_section = build_outline_section(&outline);
+        let outline_counts = db.count_chapters_by_outline(project_id).unwrap_or_default();
+        let outline_section = build_outline_section(&outline, &outline_counts);
 
         let style = style_section(db, project_id);
         let mut system = if lore_section.is_empty() {
@@ -1193,6 +1355,8 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         if !summary.is_empty() {
             let _ = db.save_summary(chapter.id, &summary);
         }
+        // 顺带提取设定变更进台账（失败不中断批量流程）
+        let _ = extract_chapter_lore_changes(db, &cfg, chapter.id).await;
         written.push((chapter_title.clone(), summary));
 
         // 断点自检：每写满 interval 章暂停，AI 巡检本批章节后等用户决定继续/叫停
@@ -1338,11 +1502,36 @@ async fn advance_outline(db: &Db, cfg: &LlmConfig, project_id: i64, written: &[(
     if n == 0 {
         return;
     }
+    // 保守推进：一次批量最多完成一个卷节点——章节与节点粒度差异大，
+    // LLM 判断容易一跳多格（10 章冲完半本大纲），宁慢勿抢
+    let first_planned = items.iter().position(|i| i.status != "done");
+    let Some(fp) = first_planned else { return };
+    // 章数下限硬闸：当前卷有预估章数且实际章数不足六成，LLM 说到了也不许收卷
+    let cur = &items[fp];
+    if cur.target_chapters > 0 {
+        let counts = db.count_chapters_by_outline(project_id).unwrap_or_default();
+        let written = counts.get(&cur.id).copied().unwrap_or(0);
+        if written * 5 < cur.target_chapters * 3 {
+            return;
+        }
+    }
+    let upto = n.min(fp + 2); // n 为 1-based 节点序号，fp+2 = 当前卷的下一格封顶
     for (idx, it) in items.iter().enumerate() {
-        if idx + 1 <= n && it.status != "done" {
+        if idx < upto && it.status != "done" {
             let _ = db.set_outline_status(it.id, "done");
         }
     }
+}
+
+/// 手动调整章节所属卷（编辑器「所属卷」选择器；0 = 未分卷）
+#[tauri::command]
+pub fn set_chapter_volume(
+    db: State<'_, Db>,
+    chapter_id: i64,
+    outline_item_id: i64,
+) -> Result<(), String> {
+    db.set_chapter_volume(chapter_id, outline_item_id)
+        .map_err(|e| e.to_string())
 }
 
 /// LLM 输出的纯文本转章节 HTML：按行分段，空行跳过，转义实体
@@ -1516,8 +1705,9 @@ pub fn save_outline_item(
     id: i64,
     title: String,
     content: String,
+    target_chapters: Option<i64>,
 ) -> Result<(), String> {
-    db.save_outline_item(id, &title, &content)
+    db.save_outline_item(id, &title, &content, target_chapters.unwrap_or(0))
         .map_err(|e| e.to_string())
 }
 
@@ -1536,6 +1726,9 @@ pub fn delete_outline_item(db: State<'_, Db>, id: i64) -> Result<(), String> {
 pub struct OutlineDraft {
     pub title: String,
     pub content: String,
+    /// 按剧情体量预估的本卷章数（0 = 未估）
+    #[serde(default)]
+    pub target_chapters: i64,
 }
 
 /// AI 生成分卷大纲：依据简介 + 设定库 + 已有章节数，产出 5~8 个节点
@@ -1572,14 +1765,18 @@ pub async fn generate_outline(
                 每个节点必须说清四件事：本卷目标、核心冲突、高潮兑现点、卷末局面变成什么；\
                 节奏符合网文规律（开局危机压身、黄金三章立住追更理由、第一个高潮、中期升级、\
                 后期爆发、结局预留）；阻力源要随卷升级，不靠解释撑看点。\
-                只输出 JSON 数组：[{\"title\": \"节点名（如：卷一·惊蛰之变）\", \"content\": \"本卷主线与关键转折，80字内\"}…]，\
+                每卷还要按剧情体量预估章数：冲突密度高、阶段目标重的卷长，过渡/开局卷短，\
+                各卷章数应有多有少，绝不允许平均分。\
+                只输出 JSON 数组：[{\"title\": \"节点名（如：卷一·惊蛰之变）\", \
+                \"content\": \"本卷主线与关键转折，80字内\", \
+                \"target_chapters\": 本卷预估章数（整数）}…]，\
                 不要输出其他内容。"
                     .to_string(),
             ),
             (
                 "user".to_string(),
                 format!(
-                    "【书名】《{}》\n【简介】\n{}\n\n【设定资料】\n{}\n\n（当前已有 {} 章正文）",
+                    "【书名】《{}》\n【简介】\n{}\n\n【设定资料】\n{}\n\n【篇幅】{}\n\n（当前已有 {} 章正文）",
                     project.name,
                     if project.synopsis.is_empty() {
                         &project.description
@@ -1587,6 +1784,16 @@ pub async fn generate_outline(
                         &project.synopsis
                     },
                     if lore.is_empty() { "（暂无设定）" } else { &lore },
+                    if project.target_total_words > 0 && project.target_chapter_words > 0 {
+                        format!(
+                            "全书目标 {} 字 / 每章约 {} 字（即全书约 {} 章），各卷预估章数请参照这个总量分配",
+                            project.target_total_words,
+                            project.target_chapter_words,
+                            project.target_total_words / project.target_chapter_words
+                        )
+                    } else {
+                        "未设字数目标，按网文常见体量估（每卷一般 20~60 章，全书 6~8 卷）".to_string()
+                    },
                     chapter_count
                 ),
             ),
@@ -1599,10 +1806,16 @@ pub async fn generate_outline(
     let end = raw.rfind(']').ok_or("大纲结果不是 JSON 数组")?;
     let drafts: Vec<OutlineDraft> =
         serde_json::from_str(&raw[start..=end]).map_err(|e| format!("大纲 JSON 解析失败: {e}"))?;
-    let items: Vec<(String, String)> = drafts
+    let items: Vec<(String, String, i64)> = drafts
         .into_iter()
-        .map(|d| (d.title.trim().to_string(), d.content.trim().to_string()))
-        .filter(|(t, _)| !t.is_empty())
+        .map(|d| {
+            (
+                d.title.trim().to_string(),
+                d.content.trim().to_string(),
+                d.target_chapters.max(0),
+            )
+        })
+        .filter(|(t, _, _)| !t.is_empty())
         .collect();
     if items.is_empty() {
         return Err("大纲结果为空，请重试".to_string());
@@ -1612,117 +1825,7 @@ pub async fn generate_outline(
     db.list_outline(project_id).map_err(|e| e.to_string())
 }
 
-/// AI 润色创意：把用户的一句话创意扩写完善成更具体的创作 brief
-#[tauri::command]
-pub async fn ai_polish_idea(db: State<'_, Db>, idea: String) -> Result<String, String> {
-    if idea.trim().is_empty() {
-        return Err("请先写一句创意".to_string());
-    }
-    let cfg = load_llm_config(&db);
-    llm::chat_once(
-        cfg,
-        vec![
-            (
-                "system".to_string(),
-                "你是资深网络小说策划。把用户的一句话创意润色扩写成更具体的创作 brief：\
-                补足题材定位、主角画像、金手指机制、核心冲突与爽点节奏。\
-                保留用户原意的核心，不要改成别的故事。150~250 字，一段连贯的文字。\
-                直接输出润色后的创意，不要解释，不要列条目。"
-                    .to_string(),
-            ),
-            ("user".to_string(), format!("【原始创意】\n{}", idea.trim())),
-        ],
-    )
-    .await
-    .map_err(|e| e.to_string())
-}
 
-// ---------- AI 起书 ----------
-
-/// AI 创建草稿：书名 + 简介 + 初始设定词条
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BootstrapDraft {
-    pub name: String,
-    pub description: String,
-    /// 番茄风长简介
-    #[serde(default)]
-    pub synopsis: String,
-    /// 全书目标字数（对话中可收集；0/None = 未设置）
-    #[serde(default)]
-    pub target_total_words: Option<i64>,
-    /// 每章目标字数
-    #[serde(default)]
-    pub target_chapter_words: Option<i64>,
-    /// 整本书的分步流程（开局→…→结局 6~10 步，落库为大纲节点）
-    #[serde(default)]
-    pub outline: Vec<OutlineDraft>,
-    pub lore: Vec<BootstrapLore>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BootstrapLore {
-    pub category: String,
-    pub title: String,
-    pub content: String,
-    pub keywords: String,
-    pub always_include: bool,
-}
-
-const BOOTSTRAP_SYSTEM: &str = "你是资深中文网文策划，深谙番茄/起点市场与读者口味。\
-根据用户的一句话创意，策划一部新书。\n\
-策划前先过一遍选材判断（体现在产出里，不要单独输出）：\
-一句话能说清的卖点是什么、主角最先撞上的具体麻烦是什么、读者持续追更的理由是什么。\
-创意如果只有人设没有事件、只有设定没有冲突，就在策划里把压迫感和事件引擎补出来。\
-书名与简介按 hook 标准写：谁在什么异常局面里、因为什么必须做什么、最吸引人的点是什么。\n\
-只输出 JSON 对象，格式：\
-{\"name\": \"书名（2~6字，有网感）\", \"description\": \"题材+一句话卖点，20字内\", \
-\"synopsis\": \"番茄小说风格的作品简介，100~150字：第一句就是钩子（反常/悬念/冲突），\
-点出金手指或最大看点，结尾抛悬念或反转预告，短句有节奏感\", \
-\"lore\": [{\"category\": \"分类\", \"title\": \"词条名\", \"content\": \"设定内容\", \
-\"keywords\": \"触发词,逗号分隔\", \"always_include\": true}…]}，不要输出任何其他内容。\
-lore 生成 4~6 条，必须包含：\
-① 主角人物卡（category 人物，always_include=true，content 含外貌/性格/口头禅/金手指，keywords 用主角姓名与昵称）；\
-② 核心对手或张力源（人物）；③ 世界观（世界观）；④ 金手指或核心规则（其他）。\
-category 只能是：人物 / 世界观 / 地点 / 物品 / 伏笔 / 其他。";
-
-#[tauri::command]
-pub async fn ai_bootstrap_draft(db: State<'_, Db>, idea: String) -> Result<BootstrapDraft, String> {
-    if idea.trim().is_empty() {
-        return Err("请先写一句创意".to_string());
-    }
-    let cfg = load_llm_config(&db);
-    let raw = llm::chat_once(
-        cfg,
-        vec![
-            ("system".to_string(), BOOTSTRAP_SYSTEM.to_string()),
-            ("user".to_string(), format!("【创意】\n{}", idea.trim())),
-        ],
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    parse_bootstrap_draft(&raw)
-}
-
-fn parse_bootstrap_draft(raw: &str) -> Result<BootstrapDraft, String> {
-    let start = raw.find('{').ok_or("策划结果不是 JSON")?;
-    let end = raw.rfind('}').ok_or("策划结果不是 JSON")?;
-    let mut draft: BootstrapDraft =
-        serde_json::from_str(&raw[start..=end]).map_err(|e| format!("策划 JSON 解析失败: {e}"))?;
-
-    // 分类兜底 + 过滤空词条
-    const VALID: [&str; 6] = ["人物", "世界观", "地点", "物品", "伏笔", "其他"];
-    draft.lore.retain(|l| !l.title.trim().is_empty());
-    for l in &mut draft.lore {
-        if !VALID.contains(&l.category.as_str()) {
-            l.category = "其他".to_string();
-        }
-    }
-    if draft.name.trim().is_empty() {
-        return Err("策划结果缺少书名，请重试".to_string());
-    }
-    Ok(draft)
-}
 
 // ---------- 对话式起书 ----------
 
@@ -1744,20 +1847,15 @@ const BOOTSTRAP_CHAT_SYSTEM: &str = "你是资深中文网文策划，深谙番�
 {\"name\": \"书名（2~6字，有网感）\", \"description\": \"题材+一句话卖点，20字内\", \
 \"synopsis\": \"番茄风简介100~150字：第一句钩子、点出看点、结尾悬念\", \
 \"target_total_words\": 全书目标字数（数字）, \"target_chapter_words\": 每章字数（数字，网文一般 2000~3000）, \
-\"outline\": [{\"title\": \"阶段名（如：开局·立足异界 / 中期·文明碰撞）\", \"content\": \"这一步的阶段目标/主要冲突/阶段末局面变化，60字内\"}…], \
+\"outline\": [{\"title\": \"阶段名（如：开局·立足异界 / 中期·文明碰撞）\", \"content\": \"这一步的阶段目标/主要冲突/阶段末局面变化，60字内\", \"target_chapters\": 本卷预估章数（整数）}…], \
 \"lore\": [{\"category\": \"人物/世界观/地点/物品/伏笔/其他\", \"title\": \"词条名\", \
 \"content\": \"设定内容\", \"keywords\": \"触发词,逗号分隔\", \"always_include\": true}…]}\
 （lore 4~6 条，必含主角人物卡 always_include=true、核心对手、世界观、金手指；\
 outline 是整本书的分步流程：开局→前期发展→中期转折→后期爆发→结局，6~10 步，\
-第一步必须把黄金三章的抓人点排进去）";
+第一步必须把黄金三章的抓人点排进去；\
+target_chapters 按各卷剧情体量预估：冲突密度高、阶段目标重的卷章数多，开局/过渡卷少，\
+各卷应有多有少，绝不允许平均分；全书总章数参照用户给的篇幅目标，没给就按网文常见体量）";
 
-#[derive(Debug, Serialize)]
-pub struct BootstrapChatReply {
-    /// AI 的回复文本（提问或策划总结）
-    pub reply: String,
-    /// 信息足够时附带的成书草稿（None = 还在提问阶段）
-    pub draft: Option<BootstrapDraft>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ChatMsg {
@@ -1765,52 +1863,6 @@ pub struct ChatMsg {
     pub content: String,
 }
 
-/// 对话式起书：AI 策划多轮提问，信息够了自动带草稿
-#[tauri::command]
-pub async fn ai_bootstrap_chat(
-    db: State<'_, Db>,
-    messages: Vec<ChatMsg>,
-) -> Result<BootstrapChatReply, String> {
-    if messages.is_empty() {
-        return Err("对话为空".to_string());
-    }
-    let cfg = load_llm_config(&db);
-    let mut msgs: Vec<(String, String)> =
-        vec![("system".to_string(), BOOTSTRAP_CHAT_SYSTEM.to_string())];
-    for m in messages {
-        let role = if m.role == "assistant" {
-            "assistant"
-        } else {
-            "user"
-        };
-        msgs.push((role.to_string(), m.content));
-    }
-    let raw = llm::chat_once(cfg, msgs).await.map_err(|e| e.to_string())?;
-
-    if let Some(pos) = raw.find("[DRAFT]") {
-        let reply = raw[..pos].trim().to_string();
-        match parse_bootstrap_draft(&raw[pos + 7..]) {
-            Ok(draft) => Ok(BootstrapChatReply {
-                reply: if reply.is_empty() {
-                    "策划方案好了，看看：".to_string()
-                } else {
-                    reply
-                },
-                draft: Some(draft),
-            }),
-            // 标记解析失败不硬报错：把原文当普通回复给用户，可继续说"重新生成"
-            Err(_) => Ok(BootstrapChatReply {
-                reply: raw.trim().to_string(),
-                draft: None,
-            }),
-        }
-    } else {
-        Ok(BootstrapChatReply {
-            reply: raw.trim().to_string(),
-            draft: None,
-        })
-    }
-}
 
 /// 对话式起书（流式版）：delta 实时推给前端，[DRAFT] 草稿由前端在 done 后解析
 #[tauri::command]
@@ -1838,7 +1890,14 @@ pub async fn ai_bootstrap_chat_stream(
         .map_err(|e| e.to_string())
 }
 
-// ---------- 起书会话归档 ----------
+// ---------- 会话归档（起书向导 bootstrap / 风格对话 style 共用，按 scene 区分） ----------
+
+fn normalize_scene(scene: Option<String>) -> String {
+    match scene.as_deref().map(str::trim) {
+        Some("style") => "style".to_string(),
+        _ => "bootstrap".to_string(),
+    }
+}
 
 /// 保存会话（id=None 新建），返回会话 id
 #[tauri::command]
@@ -1848,20 +1907,29 @@ pub fn save_chat_session(
     title: String,
     messages: String,
     draft: String,
+    scene: Option<String>,
 ) -> Result<i64, String> {
-    db.save_chat_session(id, &title, &messages, &draft)
+    db.save_chat_session(id, &title, &messages, &draft, &normalize_scene(scene))
         .map_err(|e| e.to_string())
 }
 
-/// 最近一条会话（进入向导恢复用）
+/// 最近一条会话（按场景过滤，进入向导/风格对话恢复用）
 #[tauri::command]
-pub fn get_latest_chat_session(db: State<'_, Db>) -> Result<Option<db::ChatSession>, String> {
-    db.latest_chat_session().map_err(|e| e.to_string())
+pub fn get_latest_chat_session(
+    db: State<'_, Db>,
+    scene: Option<String>,
+) -> Result<Option<db::ChatSession>, String> {
+    db.latest_chat_session(&normalize_scene(scene))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_chat_sessions(db: State<'_, Db>) -> Result<Vec<db::ChatSession>, String> {
-    db.list_chat_sessions().map_err(|e| e.to_string())
+pub fn list_chat_sessions(
+    db: State<'_, Db>,
+    scene: Option<String>,
+) -> Result<Vec<db::ChatSession>, String> {
+    db.list_chat_sessions(&normalize_scene(scene))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1925,7 +1993,8 @@ pub async fn assistant_chat(
 
     // 大纲
     let outline = db.list_outline(project_id).unwrap_or_default();
-    let outline_section = build_outline_section(&outline);
+    let outline_counts = db.count_chapters_by_outline(project_id).unwrap_or_default();
+    let outline_section = build_outline_section(&outline, &outline_counts);
 
     // 注入明细（可观测性）
     let mut notes = Vec::new();

@@ -27,3 +27,5 @@ image = "0.25"
 imageproc = "0.25"
 ab_glyph = "0.2"
 base64 = "0.22"
+# 番茄官方 API 直连（请求签名 + 正文解密），替代社区中继；MIT，锁定 rev
+fanqie-rs = { git = "https://github.com/ZreXoc/fanqie-rs", rev = "906c6fd5744af0ef49e529102cdb64a250c067f7" }

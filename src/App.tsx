@@ -8,6 +8,7 @@ import { AppRail } from "./components/AppRail";
 import { Sidebar } from "./components/Sidebar";
 import { Editor } from "./components/Editor";
 import { LoreEditor } from "./components/LoreEditor";
+import { LoreLedgerView } from "./components/LoreLedgerView";
 import { CoverView } from "./components/CoverView";
 import { CheckView } from "./components/CheckView";
 import { VideoView } from "./components/VideoView";
@@ -29,6 +30,7 @@ import {
 type View =
   | { kind: "chapter"; chapter: Chapter; initialScroll?: number }
   | { kind: "lore"; entry: LoreEntry }
+  | { kind: "loreLedger" }
   | { kind: "outline" }
   | { kind: "cover" }
   | { kind: "check" }
@@ -171,12 +173,12 @@ export default function App() {
         await api.saveProjectInfo(p.id, draft.description, draft.synopsis);
         p.synopsis = draft.synopsis;
       }
-      // 整体流程步骤落库为大纲节点（进度追踪 + 续写注入）
+      // 整体流程步骤落库为大纲节点（进度追踪 + 续写注入；带按剧情预估的各卷章数）
       let outlineCount = 0;
       for (const o of draft.outline ?? []) {
         if (!o.title.trim()) continue;
         const it = await api.addOutlineItem(p.id, o.title);
-        await api.saveOutlineItem(it.id, o.title, o.content);
+        await api.saveOutlineItem(it.id, o.title, o.content, o.target_chapters ?? 0);
         outlineCount++;
       }
       setProjects((prev) => [p, ...prev]);
@@ -426,6 +428,7 @@ export default function App() {
     (view == null ||
       view.kind === "chapter" ||
       view.kind === "lore" ||
+      view.kind === "loreLedger" ||
       view.kind === "outline");
 
   /** 改写替换成功：刷新列表 + 重载当前章节（updated_at 变化触发编辑器重挂载） */
@@ -436,6 +439,22 @@ export default function App() {
       setView({ kind: "chapter", chapter: await api.getChapter(chapterId) });
     }
     showToast("已替换原文并更新摘要");
+  };
+
+  /** 调整章节所属卷：落库 + 刷新侧栏分组 + 就地更新当前编辑器 */
+  const handleChangeChapterVolume = async (chapterId: number, itemId: number) => {
+    try {
+      await api.setChapterVolume(chapterId, itemId);
+      if (currentProjectId != null) await refreshChapters(currentProjectId);
+      if (view?.kind === "chapter" && view.chapter.id === chapterId) {
+        setView({
+          kind: "chapter",
+          chapter: { ...view.chapter, outline_item_id: itemId },
+        });
+      }
+    } catch (e) {
+      showToast(`调整分卷失败：${String(e)}`);
+    }
   };
 
   const currentProject = projects.find((p) => p.id === currentProjectId);
@@ -554,6 +573,7 @@ export default function App() {
             {(view == null ||
               view.kind === "chapter" ||
               view.kind === "lore" ||
+              view.kind === "loreLedger" ||
               view.kind === "outline") && (
               <Sidebar
                 chapters={chapters}
@@ -568,6 +588,8 @@ export default function App() {
                 onSelectLore={handleSelectLore}
                 onCreateLore={() => void handleCreateLore()}
                 onDeleteLore={(id) => void handleDeleteLore(id)}
+                onSelectLoreLedger={() => setView({ kind: "loreLedger" })}
+                loreLedgerActive={view?.kind === "loreLedger"}
                 onSelectOutline={() => setView({ kind: "outline" })}
                 onSelectCover={() => setView({ kind: "cover" })}
               />
@@ -581,6 +603,10 @@ export default function App() {
                   onSaved={handleChapterSaved}
                   onOpenBatchWrite={() => setBatchOpen(true)}
                   initialScroll={view.initialScroll}
+                  outlineItems={outlineItems}
+                  onChangeVolume={(itemId) =>
+                    void handleChangeChapterVolume(view.chapter.id, itemId)
+                  }
                   onScrollPos={(top) => {
                     if (view.kind === "chapter") handleScrollPos(view.chapter.id, top);
                   }}
@@ -590,6 +616,13 @@ export default function App() {
                   key={view.entry.id}
                   entry={view.entry}
                   onSaved={handleLoreSaved}
+                />
+              ) : view?.kind === "loreLedger" ? (
+                <LoreLedgerView
+                  key={currentProjectId}
+                  projectId={currentProjectId}
+                  chapters={chapters}
+                  currentChapterId={currentChapterId}
                 />
               ) : view?.kind === "cover" ? (
                 <CoverView

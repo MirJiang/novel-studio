@@ -51,7 +51,7 @@ src/
     SettingsView.tsx          设置页（整页非弹窗，左侧分类菜单）：文本模型/封面生图/配音 TTS + 平台账号占位
 src-tauri/src/
   lib.rs                      Tauri 入口：插件注册、DB 初始化、命令注册表
-  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v15）
+  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v19）
   commands.rs                 写作/设定/封面/体检等 #[tauri::command] + prompt 组装 + 注入逻辑
   commands_style.rs           风格库命令：LLM 蒸馏风格卡 + CRUD（样本由用户本地上传）
   commands_publish.rs         发布：番茄/抖音第二窗口 + eval 注入填充（location.hash 回读结果）
@@ -61,6 +61,8 @@ src-tauri/src/
   llm.rs                      OpenAI 兼容协议客户端：stream_chat（SSE 流式）+ chat_once（非流式）
   image_gen.rs                生图 API（size 参数化）+ ab_glyph 封面排版合成
   video.rs                    火山 TTS 客户端 + ffmpeg/ffprobe 探测与合成（zoompan/concat/ASS 字幕）
+  fanqie.rs                   番茄在线搜书：官方 API 直连（fanqie-rs git 依赖，MIT，请求签名+AES/gzip 解密，
+                              不经中继）；正文走官方 batch_full 批量接口 ≤30 章/请求，批次限速 400ms
 src-tauri/binaries/           ffmpeg.exe + ffprobe.exe（随包分发，gyan essentials 6.1.1）
 scripts/gen-icons.mjs         占位图标生成（正式图标：pnpm tauri icon）
 scripts/cap.ps1               真机窗口离屏截图（PrintWindow，自检用）
@@ -78,7 +80,7 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 2. **任何 AI 输出都要过设定注入**（续写/改写/润色/扩写共用 `build_lore_section`）
 3. **prompt 预算硬顶**：设定 2000 字 / 摘要 1500 字 / 前文尾部 3000 字 / 体检摘要 8000 字 / 大纲 600 字——成本可预测
 4. 注入明细通过 meta 事件对用户可见（崩了能分清"没写设定"还是"没注入"）
-5. 数据库改动走 `user_version` 版本化迁移（当前 v15），禁止直接改老表的 CREATE 语句了事
+5. 数据库改动走 `user_version` 版本化迁移（当前 v19），禁止直接改老表的 CREATE 语句了事
 6. 模型接入协议只有两套：OpenAI 兼容 + Anthropic（D27），禁止为单个厂商接私有 SDK/协议；
    唯一例外是阿里云生图（wan2.x-image 无 OpenAI 协议入口，image_gen.rs 按域名自动适配）
 
@@ -102,9 +104,10 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 - 作品/章节：`create_project(name, description?, targetTotalWords?, targetChapterWords?)` `update_project_targets` `list_projects` `rename_project` `delete_project`（级联清磁盘目录）`create_chapter` `list_chapters` `get_chapter` `save_chapter` `delete_chapter` `save_summary`
 - 设定库：`create_lore_entry` `list_lore_entries` `update_lore_entry` `delete_lore_entry` `set_lore_ref_image`（上传人物卡参考图）`remove_lore_ref_image` `generate_lore_ref_image`（按分类出设定图：人物三视图/地点场景概念图/物品设定图，D28） `collect_lore_entries`（AI 从摘要链搜集人物/地点/物品词条入库，8000 字预算，已登记标题跳过）
 - 视频：`create_video(project_id, title, chapter_ids, mode?)`（mode: image 静图运镜 / video 图生视频）`generate_shot_video`（单镜重跑）`set_video_style`（全片统一画风 v13）`set_video_extras`（BGM/片头片尾，素材拷入视频目录）`list_videos` `get_video_detail` `delete_video` `save_narration` `update_shot_prompt` `generate_narration`（流式）`generate_storyboard` `generate_shot_image`（单镜重绘）`generate_missing_images`（进度）`synthesize_voices`（进度）`compose_video`（进度）`open_video_folder`
+- 番茄搜书：`fq_search(query)` `fq_distill_sample(book_id)`（前几章样本 ~1.5 万字）`fq_download(book_id, path, channel)`（进度事件）
 - 设置：`get_setting` `set_setting`
 - 导出：`export_project(project_id, path)` → txt
-- 封面：`generate_cover(project_id, prompt, title, author)` → { path, data_url }；`list_covers` `get_cover_data`
+- 封面：`generate_cover(project_id, prompt, title, author)` → { path, data_url }；`list_covers`（预览走 asset 协议 fileUrl）
 - 体检：`summary_stats` `generate_missing_summaries`（进度事件）`check_consistency`（流式）`save_check_report` `list_check_reports` `get_check_report`
 - 任务队列：`enqueue_batch_chapters` `enqueue_video_shots` `enqueue_rewrite_chapters` `list_tasks` `cancel_task` `resume_task`（断点继续）`retry_task` `clear_finished_tasks`（前端 2s 轮询 tasks 表驱动浮条/toast/章节实时刷新；批量写章参数 count<=0 按全书目标字数推算，逐章落库+自动摘要+收尾推进大纲）
 - 风格库：`distill_style(name, source, sample_text)` `list_styles` `delete_style` `set_project_style(project_id, style_id)`
@@ -113,7 +116,7 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 - 助手：`assistant_chat(project_id, chapter_id?, messages, channel)`（全书注入流式）
   `assistant_rewrite_chapter(chapter_id, instruction, channel)`（流式预览，前端确认后落库）
   `locate_rewrite_scope` `rollback_rewrite_task` `scan_banned_words`（跨章改写定位/回滚/合规扫描）
-- AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_draft(idea)` `ai_bootstrap_chat_stream(messages, channel)`（对话式起书流式，[DRAFT] 草稿前端解析）`save_chat_session` `get_latest_chat_session` `list_chat_sessions` `delete_chat_session`（起书会话归档 v11）
+- AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_chat_stream(messages, channel)`（对话式起书流式，[DRAFT] 草稿前端解析）`save_chat_session` `get_latest_chat_session` `list_chat_sessions` `delete_chat_session`（会话归档 v11，scene 区分起书/风格 v16）；台账：`extract_lore_changes(chapter_id)`（手动提取，幂等整章替换）`list_lore_changes(project_id, entry_id?, entry_title?)`
 
 ### 设置项 key（settings 表）
 
@@ -121,7 +124,8 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
   `llm_base_url`（默认 https://api.deepseek.com/v1）`llm_api_key` `llm_model`（默认 deepseek-chat）
 - 生图：`img_base_url`（默认火山方舟 https://ark.cn-beijing.volces.com/api/v3）`img_api_key` `img_model`（默认 doubao-seedream-4-0-250828）；
   也支持阿里云百炼/Token 套餐——base_url 含 aliyuncs.com 时自动走 DashScope 原生多模态协议（wan2.7-image 等，image_gen.rs `generate_image_dashscope`），尺寸分隔符 x→* 自动转换，人物卡参考图照常携带
-- 图生视频：`video_model`（默认 doubao-seedance-1-0-pro-250528，推荐控制台开通 2.x 支持多图参考），与 img_api_key 同一把方舟 Key（需控制台开通视频模型）；`video_duration`（单镜秒数，默认 5，3~15）
+- 图生视频：`video_base_url` `video_api_key`（设置里与生图分家；留空回退 img_base_url/img_api_key，老配置零迁移）
+  `video_model`（默认 doubao-seedance-1-0-pro-250528，推荐控制台开通 2.x 支持多图参考，需控制台开通视频模型）；`video_duration`（单镜秒数，默认 5，3~15）
 - 其他：`author_name`（封面作者名记忆）
 - 配音：`tts_app_id` `tts_access_token` `tts_cluster`（默认 volcano_tts）`tts_voice`（火山控制台开通的 voice_type）
 - 视频产物：`%APPDATA%\com.novelstudio.app\videos\<project_id>\<video_id>\`（镜头图/镜头 mp4/配音/中间件/final.mp4）
@@ -136,13 +140,15 @@ styles(id, name, source, sample_chars, guide/*风格卡，写作注入*/,
        example/*示例片段*/, kind/*text写作/image图片画风/video视频运镜 v14*/,
        created_at, updated_at)  /* 迁移 v8，全局表 */
 chapters(id, project_id→projects CASCADE, title, content/*HTML*/, summary,
-         order_index, word_count, created_at, updated_at)
+         order_index, word_count, outline_item_id/*所属卷=大纲节点 v18，0=未分卷*/,
+         created_at, updated_at)
 lore_entries(id, project_id CASCADE, category, title, content, keywords/*逗号分隔*/,
              always_include, enabled, ref_image/*人物卡参考图，v5*/, created_at, updated_at)
 settings(key PK, value)
 check_reports(id, project_id CASCADE, content, created_at)
 outline_items(id, project_id CASCADE, title, content, order_index,
-              status/*planned/done*/, created_at, updated_at)  /* 迁移 v6，续写时注入 */
+              status/*planned/done*/, target_chapters/*按剧情体量预估的卷章数 v19，非平均分*/,
+              created_at, updated_at)  /* 迁移 v6，续写时注入 */
 videos(id, project_id CASCADE, title, chapter_ids, narration, status, mode/*image/video v9*/,
        style/*全片统一画风 v13*/ , motion_style/*运镜风格 v14*/（均生成期注入）,
        bgm_path, bgm_volume, intro_path, outro_path/*BGM/片头片尾 v10*/, output_path,
@@ -151,6 +157,12 @@ video_shots(id, video_id CASCADE, idx, text, prompt, image_path, audio_path,
             video_path/*图生视频 v9*/, duration_ms, status, created_at, updated_at)  /* 迁移 v4 */
 tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload/*JSON*/,
       progress_current/total/label, result, error, created_at, updated_at)  /* 迁移 v9 */
+chat_sessions(id, title, messages/*JSON*/, draft/*JSON*/, scene/*bootstrap/style v16*/,
+              created_at, updated_at)          /* 迁移 v11，起书向导/风格对话共用归档 */
+chapter_backups(id, task_id, chapter_id, title, content, summary, created_at)  /* v12 跨章改写快照 */
+lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登场*/,
+             entry_title, category, kind/*new登场/update变更/retire退场*/, detail,
+             created_at)                      /* 迁移 v17 设定变更台账（只读，无审核） */
 ```
 
 ## 已完成（v0.1~v0.3，全部构建验证通过）
@@ -159,7 +171,19 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 - AI 续写：流式、注入设定库 + 前情摘要 + 前文尾部，meta 明细可见
 - 划词 改写/润色/扩写：选区浮动条，位置感知流式替换（`makeInserter`）
 - 设定库：关键词触发 + 常驻注入 + 预算截断
+- 番茄搜书：风格库「番茄搜书」在线搜索 → 一键蒸馏风格（抓前几章样本走既有蒸馏管线）/ 全本下载 txt（进度条）；
+  接口：官方 API 直连（Cargo git 依赖 fanqie-rs，锁定 rev 906c6fd；官网阅读页有字体混淆，官方 App 接口返回密文由该库解密，文本干净）
 - 前情摘要：单章生成（长章取头 3500+尾 2000）/批量补齐（进度条）
+- 设定变更台账：AI 从章节提取设定持久变更（登场/变更/退场），只读查看无审核流；
+  自动挂载在摘要生成/批量补齐/批量写章之后（失败静默不中断），手动可在台账页按章提取/全部补齐；
+  侧栏设定库 Tab「变更台账」按章分组，条目编辑器带变更时间线
+- 卷的概念：卷 = 分卷大纲节点（chapters.outline_item_id）；新章自动归入首个未完成卷，
+  章节列表按卷分组（卷头带状态/章数，空卷显示作路线图），编辑器元信息行可手调所属卷；
+  续写/批量注入带「本卷已写 N 章」+ 节奏纪律提示；批量收尾的大纲推进钳制为一次最多一卷
+  （原来 LLM 判多少标多少，10 章能冲完 4/6 节点）
+- 卷预估章数（v19）：AI 起书/大纲生成按剧情体量预估各卷章数（明示禁止平均分，参照全书字数目标），
+  大纲页/起书向导可手改；注入升级为「已写 N/约 M 章」+ 分阶段节奏提示（<5 成铺陈/5~8 成中段/≥8 成收尾）；
+  收卷硬闸：实际章数不足预估六成时 advance_outline 拒绝标完成；大纲页与侧栏卷头显示 N/约M 章
 - 导出 txt：系统保存对话框，html_to_text 段落转换
 - 封面工坊：AI 底图 + 程序排版书名（1536×2048 3:4），历史管理
 - 全书体检：设定冲突/时间线/伏笔台账/逻辑漏洞，流式报告 + 存档
@@ -185,7 +209,7 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 - 风格库分类（v14）：styles.kind = text/image/video；图片画风（赛璐璐/古风/厚涂/写实电影/末世/扁平）
   与视频运镜（呼吸感手持/固定机位/缓慢推进/环绕/跟随/空镜）**内置预设直接用，无需添加**
   （词库源自 2026-08 调研与《丧尸清道夫》公开 cheatsheet，src/lib/stylePresets.ts）；
-  对话生成三类页签共用（generate_style_card 按 kind 出卡：写作卡/画风锚点词/运镜锚点词），
+  对话生成三类页签共用（generate_style_card_stream 流式多轮，[CARD] 出卡：写作卡/画风锚点词/运镜锚点词），
   对话生成与上传蒸馏均为按钮+弹层；写作内置四卡（番茄爽文/古龙/知乎盐选/晋江言情，
   v15 种子入 styles 表 source=内置，创建作品即可直选）；
   消费端：创建视频表单选画风+运镜、VideoView 详情可改、封面工坊选画风（generate_cover 追加锚点词）、
@@ -238,7 +262,7 @@ tasks(id, project_id, kind/*batch_chapters/video_shots*/, label, status, payload
 6. API Key 目前明文存 SQLite（本地单机可接受，商业化前要加密）
 7. 前端 bundle 约 520KB（主要是 TipTap），桌面端可接受，后期可 code-split
 8. 图片显示一律走 asset 协议（`api.fileUrl` → convertFileSrc，scope `$APPDATA/**`），WebView 自带缓存；
-   禁止回退到 `get_cover_data` 的 data URL 读法（几 MB base64 过 IPC，慢且必闪占位符）。
+   封面/参考图/视频帧一律 asset 协议直读（几 MB base64 过 IPC，慢且必闪占位符）。
    因此**会覆盖更新的图片文件必须每次换新文件名**（lore_refs 带时间戳、封面/镜头图本来就带），
    同路径覆盖会被 WebView 缓存成旧图
 

@@ -1,6 +1,6 @@
 //! 图生视频：火山方舟 Seedance（异步任务：创建 → 轮询 → 下载落盘）
 //!
-//! 鉴权复用生图的方舟 API Key（settings: img_base_url / img_api_key），
+//! 鉴权用 settings 的 video_base_url / video_api_key（留空回退生图的 img_*），
 //! 模型在 settings 的 video_model（建议 Seedance 2.x，支持 reference_image 多图参考锁角色）。
 //! 注意：返回的视频 URL 仅约 24 小时有效，拿到必须立即下载。
 
@@ -46,7 +46,7 @@ pub async fn generate_from_first_frame(
 ) -> Result<()> {
     if cfg.api_key.trim().is_empty() {
         return Err(anyhow!(
-            "尚未配置方舟 API Key（与生图共用，见「设置 → 封面生图」），或账号未开通视频模型"
+            "尚未配置视频模型 API Key（见「设置 → 图生视频」，留空则复用封面生图的 Key），或账号未开通视频模型"
         ));
     }
     let client = reqwest::Client::new();

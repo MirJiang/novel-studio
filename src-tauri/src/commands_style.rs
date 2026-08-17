@@ -3,9 +3,11 @@
 //! 样本由用户上传 txt 或粘贴文本（前端 FileReader 读入），仅用于本地风格分析，
 //! UI 已提示建议使用公版/免费授权作品。
 
-use crate::commands::load_llm_config;
+use crate::commands::{load_llm_config, ChatMsg};
 use crate::db::{Db, Style};
 use crate::llm;
+use crate::llm::StreamEvent;
+use tauri::ipc::Channel;
 use tauri::State;
 
 /// 蒸馏时喂给 LLM 的样本上限（头 6000 + 中 3000 + 尾 3000）
@@ -102,61 +104,6 @@ pub fn set_project_style(db: State<'_, Db>, project_id: i64, style_id: i64) -> R
         .map_err(|e| e.to_string())
 }
 
-const STYLE_CARD_SYSTEM: &str = "你是文学风格分析师兼作家。按用户的描述产出一张网文写作风格卡。\
-描述里提到具体作家/作品时，凭你的知识概括其公开可见的风格特征，绝不复述或模仿原文句子。\
-按六个小节输出，每节一两句，总共不超过 400 字：\n\
-【整体基调】【句式与节奏】【用词偏好】【叙事视角】【对话风格】【钩子与爽点】\n\
-只输出风格卡本身，不要解释。";
-
-/// 图片画风卡：产出可直接注入生图 prompt 的画风锚点词
-const IMAGE_CARD_SYSTEM: &str = "你是 AI 绘画提示词专家。按用户的描述产出一组画风锚点词，\
-用于注入文生图 prompt 统一全片画风。\
-要求：只写风格/质感/光影/色调/构图类词语（如「日系赛璐璐，干净平涂，柔和光影」），\
-不写任何具体人物/场景内容；总长度 60 字以内；可用「杜绝 XX 感」类否定词。\
-只输出锚点词本身，不要解释、不要序号。";
-
-/// 视频运镜卡：产出可注入图生视频运动 prompt 的运镜锚点词
-const VIDEO_CARD_SYSTEM: &str = "你是视频分镜导演。按用户的描述产出一组运镜锚点词，\
-用于注入图生视频的运动提示词。\
-要求：描述镜头运动方式与幅度（如「手持镜头，保持极其微弱、类似呼吸般的浮动」），\
-收敛运动幅度（极缓/轻微类限定词），不写画面内容；总长度 40 字以内。\
-只输出锚点词本身，不要解释、不要序号。";
-
-/// 对话生成风格卡：纯描述出卡；带 previous_guide + tweak 时是微调（输出调整后的完整卡）。
-/// kind = text（默认，写作风格卡）/ image（画风锚点词）/ video（运镜锚点词）
-#[tauri::command]
-pub async fn generate_style_card(
-    db: State<'_, Db>,
-    guidance: String,
-    previous_guide: Option<String>,
-    tweak: Option<String>,
-    kind: Option<String>,
-) -> Result<String, String> {
-    let cfg = load_llm_config(&db);
-    let system = match kind.as_deref().map(str::trim) {
-        Some("image") => IMAGE_CARD_SYSTEM,
-        Some("video") => VIDEO_CARD_SYSTEM,
-        _ => STYLE_CARD_SYSTEM,
-    };
-    let user = match (previous_guide, tweak) {
-        (Some(prev), Some(tw)) if !prev.trim().is_empty() && !tw.trim().is_empty() => format!(
-            "【已有风格卡】\n{}\n\n【调整要求】\n{}\n\n输出调整后的完整风格卡（格式不变）。",
-            prev.trim(),
-            tw.trim()
-        ),
-        _ => format!("【风格描述】\n{}", guidance.trim()),
-    };
-    llm::chat_once(
-        cfg,
-        vec![
-            ("system".to_string(), system.to_string()),
-            ("user".to_string(), user),
-        ],
-    )
-    .await
-    .map_err(|e| e.to_string())
-}
-
 /// 保存风格卡（对话生成的写作风格，或前端内置预设一键添加的图片/视频风格）
 #[tauri::command]
 pub fn save_style_card(
@@ -179,5 +126,96 @@ pub fn save_style_card(
         _ => "text",
     };
     db.create_style(&name, source.trim(), 0, guide.trim(), "", kind)
+        .map_err(|e| e.to_string())
+}
+
+// ---------- 对话式风格定制（流式多轮，[CARD] 标记出卡） ----------
+
+/// 对话底座：提问纪律 + 出卡格式，三类页签共用，卡规格按 kind 拼
+const STYLE_CHAT_BASE: &str = "你在和用户通过多轮对话共创一张风格卡。\
+【提问纪律】\n\
+- 每轮最多问 1~2 个问题，挑信息缺口最大的问，绝不把一堆问题糊用户脸上\n\
+- 用户说“直接生成”“你看着办”之类的话，或信息已够用（通常 1~3 轮）时，立刻出卡\n\
+- 回答时顺带给出你的专业建议，别只做复读机\n\
+【出卡格式】（严格遵守）\n\
+先输出一段话说明这张卡的要点，然后另起一行输出标记 [CARD]，标记后紧跟完整风格卡。\
+用户提调整意见后，重新输出调整后的完整卡（仍带 [CARD] 标记）。\
+未出卡时正常对话，绝不输出标记。\n\
+【卡的规格】\n";
+
+/// 写作风格卡规格（沿用蒸馏卡的六节结构，注入续写/批量/划词通用）
+const STYLE_CHAT_SPEC_TEXT: &str = "按六个小节输出，每节一两句，总共不超过 400 字：\n\
+【整体基调】【句式与节奏】【用词偏好】【叙事视角】【对话风格】【钩子与爽点】\n\
+描述里提到具体作家/作品时，凭你的知识概括其公开可见的风格特征，绝不复述或模仿原文句子。";
+
+/// 图片画风卡规格（锚点词约束同一次性出卡时代的图片卡规格）
+const STYLE_CHAT_SPEC_IMAGE: &str = "只写风格/质感/光影/色调/构图类词语（如「日系赛璐璐，干净平涂，柔和光影」），\
+不写任何具体人物/场景内容；总长度 60 字以内；可用「杜绝 XX 感」类否定词。";
+
+/// 视频运镜卡规格（收敛约束同一次性出卡时代的视频卡规格）
+const STYLE_CHAT_SPEC_VIDEO: &str = "描述镜头运动方式与幅度（如「手持镜头，保持极其微弱、类似呼吸般的浮动」），\
+收敛运动幅度（极缓/轻微类限定词），不写画面内容；总长度 40 字以内。";
+
+/// 对话式风格定制（流式）：多轮问答 → [CARD] 出卡 → 继续对话微调（重新出整卡）。
+/// kind = text（默认）/ image / video；[CARD] 后的卡内容由前端在 done 后解析。
+/// base_card 有值时是「优化现有风格」模式：现有卡作为上下文垫在对话最前（不进 UI 气泡）。
+#[tauri::command]
+pub async fn generate_style_card_stream(
+    db: State<'_, Db>,
+    messages: Vec<ChatMsg>,
+    kind: Option<String>,
+    base_card: Option<String>,
+    channel: Channel<StreamEvent>,
+) -> Result<(), String> {
+    if messages.is_empty() {
+        return Err("对话为空".to_string());
+    }
+    let (persona, spec) = match kind.as_deref().map(str::trim) {
+        Some("image") => ("你是 AI 绘画提示词专家。", STYLE_CHAT_SPEC_IMAGE),
+        Some("video") => ("你是视频分镜导演。", STYLE_CHAT_SPEC_VIDEO),
+        _ => ("你是文学风格分析师兼作家。", STYLE_CHAT_SPEC_TEXT),
+    };
+    let cfg = load_llm_config(&db);
+    let mut msgs: Vec<(String, String)> = vec![(
+        "system".to_string(),
+        format!("{persona}{STYLE_CHAT_BASE}{spec}"),
+    )];
+    if let Some(base) = base_card.filter(|b| !b.trim().is_empty()) {
+        msgs.push((
+            "user".to_string(),
+            format!(
+                "【现有风格卡】\n{}\n\n我想在这张卡的基础上调整优化。",
+                base.trim()
+            ),
+        ));
+        msgs.push((
+            "assistant".to_string(),
+            "好的，当前风格卡我收到了。告诉我想怎么改，每次调整我都会输出完整的新卡（带 [CARD] 标记）。"
+                .to_string(),
+        ));
+    }
+    for m in messages {
+        let role = if m.role == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
+        msgs.push((role.to_string(), m.content));
+    }
+    llm::stream_chat(cfg, msgs, channel)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 更新现有风格卡（对话优化后保存修改：只动名称与卡内容）
+#[tauri::command]
+pub fn update_style(db: State<'_, Db>, id: i64, name: String, guide: String) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("请给风格起个名字".to_string());
+    }
+    if guide.trim().is_empty() {
+        return Err("风格卡内容为空".to_string());
+    }
+    db.update_style(id, name.trim(), guide.trim())
         .map_err(|e| e.to_string())
 }

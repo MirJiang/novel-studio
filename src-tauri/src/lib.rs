@@ -5,6 +5,7 @@ mod commands_publish;
 mod commands_style;
 mod commands_video;
 mod db;
+mod fanqie;
 mod image_gen;
 mod llm;
 mod tasks;
@@ -38,6 +39,7 @@ pub fn run() {
             commands::add_outline_item,
             commands::save_outline_item,
             commands::set_outline_status,
+            commands::set_chapter_volume,
             commands::delete_outline_item,
             commands::generate_outline,
             commands::set_lore_ref_image,
@@ -56,10 +58,11 @@ pub fn run() {
             commands::update_lore_entry,
             commands::delete_lore_entry,
             commands::save_summary,
+            commands::extract_lore_changes,
+            commands::list_lore_changes,
             commands::export_project,
             commands::generate_cover,
             commands::list_covers,
-            commands::get_cover_data,
             commands::summary_stats,
             commands::generate_missing_summaries,
             tasks::enqueue_batch_chapters,
@@ -80,8 +83,6 @@ pub fn run() {
             commands::ai_continue,
             commands::ai_transform,
             commands::generate_summary,
-            commands::ai_bootstrap_draft,
-            commands::ai_bootstrap_chat,
             commands::ai_bootstrap_chat_stream,
             commands::save_chat_session,
             commands::get_latest_chat_session,
@@ -89,13 +90,16 @@ pub fn run() {
             commands::delete_chat_session,
             commands::assistant_chat,
             commands::assistant_rewrite_chapter,
-            commands::ai_polish_idea,
             commands_style::distill_style,
             commands_style::list_styles,
             commands_style::delete_style,
             commands_style::set_project_style,
-            commands_style::generate_style_card,
             commands_style::save_style_card,
+            commands_style::generate_style_card_stream,
+            commands_style::update_style,
+            fanqie::fq_search,
+            fanqie::fq_distill_sample,
+            fanqie::fq_download,
             commands_publish::open_fanqie_window,
             commands_publish::fill_chapter_draft,
             commands_publish::open_douyin_window,

@@ -14,6 +14,9 @@ interface SidebarProps {
   onSelectLore: (id: number) => void;
   onCreateLore: () => void;
   onDeleteLore: (id: number) => void;
+  /** 打开设定变更台账（主区整页） */
+  onSelectLoreLedger: () => void;
+  loreLedgerActive: boolean;
   onSelectOutline: () => void;
   /** 打开封面工坊（整页视图，侧栏隐藏） */
   onSelectCover: () => void;
@@ -148,42 +151,101 @@ function OutlineList(props: SidebarProps) {
 }
 
 function ChapterList(props: SidebarProps) {
+  const renderChapter = (c: ChapterMeta) => {
+    const active = c.id === props.currentChapterId;
+    return (
+      <div
+        key={c.id}
+        className={`group flex items-center rounded-[10px] px-2 py-1.5 transition-colors ${
+          active ? "bg-surface shadow-card" : "hover:bg-hover"
+        }`}
+      >
+        <button
+          className="min-w-0 flex-1 text-left"
+          onClick={() => props.onSelectChapter(c.id)}
+        >
+          <div
+            className={`truncate text-[13px] ${
+              active ? "font-semibold text-ink" : "text-body"
+            }`}
+          >
+            {c.title}
+          </div>
+          <div className="mt-px text-[11px] text-faint">{c.word_count} 字</div>
+        </button>
+        <button
+          title="删除章节"
+          className="ml-1 hidden text-faint group-hover:block hover:text-pred-t"
+          onClick={() => props.onDeleteChapter(c.id)}
+        >
+          ×
+        </button>
+      </div>
+    );
+  };
+
   if (props.chapters.length === 0) {
     return <p className="px-1 py-2 text-xs text-muted">还没有章节</p>;
   }
+
+  // 无大纲：扁平列表（卷 = 大纲节点，没有大纲就没有卷）
+  if (props.outlineItems.length === 0) {
+    return <>{props.chapters.map(renderChapter)}</>;
+  }
+
+  // 按卷分组：未分卷（含大纲删节点后的悬挂章节）在最前，卷按大纲顺序；空卷也显示（写作路线图）
+  const outlineIds = new Set(props.outlineItems.map((o) => o.id));
+  const byVolume = new Map<number, ChapterMeta[]>();
+  const loose: ChapterMeta[] = [];
+  for (const c of props.chapters) {
+    if (c.outline_item_id && outlineIds.has(c.outline_item_id)) {
+      const arr = byVolume.get(c.outline_item_id) ?? [];
+      arr.push(c);
+      byVolume.set(c.outline_item_id, arr);
+    } else {
+      loose.push(c);
+    }
+  }
+  const currentIdx = props.outlineItems.findIndex((o) => o.status !== "done");
+
+  const volumeHeader = (label: string, chip: string | null, countText: string) => (
+    <p className="flex items-center gap-1.5 px-2 pt-2.5 pb-1 text-[11px] font-semibold text-muted">
+      <span className="truncate">{label}</span>
+      {chip && (
+        <span
+          className={`shrink-0 rounded-full px-1.5 py-px text-[9px] ${
+            chip === "已完成"
+              ? "bg-pgreen text-pgreen-t"
+              : "bg-accent-soft text-accent"
+          }`}
+        >
+          {chip}
+        </span>
+      )}
+      <span className="ml-auto shrink-0 font-normal text-faint">{countText}</span>
+    </p>
+  );
+
   return (
     <>
-      {props.chapters.map((c) => {
-        const active = c.id === props.currentChapterId;
+      {loose.length > 0 && (
+        <>
+          {volumeHeader("未分卷", null, `${loose.length} 章`)}
+          {loose.map(renderChapter)}
+        </>
+      )}
+      {props.outlineItems.map((o, i) => {
+        const rows = byVolume.get(o.id) ?? [];
+        const chip =
+          o.status === "done" ? "已完成" : i === currentIdx ? "进行中" : null;
+        const countText =
+          o.target_chapters > 0
+            ? `${rows.length}/约${o.target_chapters} 章`
+            : `${rows.length} 章`;
         return (
-          <div
-            key={c.id}
-            className={`group flex items-center rounded-[10px] px-2 py-1.5 transition-colors ${
-              active ? "bg-surface shadow-card" : "hover:bg-hover"
-            }`}
-          >
-            <button
-              className="min-w-0 flex-1 text-left"
-              onClick={() => props.onSelectChapter(c.id)}
-            >
-              <div
-                className={`truncate text-[13px] ${
-                  active ? "font-semibold text-ink" : "text-body"
-                }`}
-              >
-                {c.title}
-              </div>
-              <div className="mt-px text-[11px] text-faint">
-                {c.word_count} 字
-              </div>
-            </button>
-            <button
-              title="删除章节"
-              className="ml-1 hidden text-faint group-hover:block hover:text-pred-t"
-              onClick={() => props.onDeleteChapter(c.id)}
-            >
-              ×
-            </button>
+          <div key={o.id}>
+            {volumeHeader(`第${i + 1}卷 · ${o.title}`, chip, countText)}
+            {rows.map(renderChapter)}
           </div>
         );
       })}
@@ -192,16 +254,30 @@ function ChapterList(props: SidebarProps) {
 }
 
 function LoreList(props: SidebarProps) {
-  if (props.loreEntries.length === 0) {
-    return (
-      <p className="px-1 py-2 text-xs leading-5 text-muted">
-        还没有设定。建一张人物卡试试：填入角色名作为关键词，AI 续写时会自动带上。
-      </p>
-    );
-  }
   return (
     <>
-      {props.loreEntries.map((e) => {
+      {/* 变更台账入口（主区整页，按章看设定变化） */}
+      <button
+        className={`mb-1 flex w-full items-center gap-1.5 rounded-[10px] px-2 py-1.5 text-left text-[13px] transition-colors ${
+          props.loreLedgerActive
+            ? "bg-surface font-semibold text-ink shadow-card"
+            : "text-muted hover:bg-hover"
+        }`}
+        onClick={props.onSelectLoreLedger}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0">
+          <path d="M12 8v4l2.5 2.5" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+        变更台账
+        <span className="ml-auto text-[10px] text-faint">按章看设定变化</span>
+      </button>
+      {props.loreEntries.length === 0 ? (
+        <p className="px-1 py-2 text-xs leading-5 text-muted">
+          还没有设定。建一张人物卡试试：填入角色名作为关键词，AI 续写时会自动带上。
+        </p>
+      ) : (
+        props.loreEntries.map((e) => {
         const active = e.id === props.currentLoreId;
         return (
           <div
@@ -242,7 +318,8 @@ function LoreList(props: SidebarProps) {
             </button>
           </div>
         );
-      })}
+        })
+      )}
     </>
   );
 }

@@ -39,6 +39,8 @@ export interface ChapterMeta {
   title: string;
   order_index: number;
   word_count: number;
+  /** 所属卷（大纲节点 id，0=未分卷） */
+  outline_item_id: number;
   updated_at: number;
 }
 
@@ -97,17 +99,10 @@ export interface BootstrapDraft {
   target_chapter_words?: number;
   /** 写作风格 id（可选，0/undefined = 不指定） */
   style_id?: number;
-  /** 整本书的分步流程（开局→…→结局 6~10 步，落库为大纲节点） */
-  outline?: { title: string; content: string }[];
+  /** 整本书的分步流程（开局→…→结局 6~10 步，落库为大纲节点）；
+   *  target_chapters 按剧情体量预估的各卷章数（非平均分） */
+  outline?: { title: string; content: string; target_chapters?: number }[];
   lore: BootstrapLore[];
-}
-
-/** 对话式起书：AI 回复 */
-export interface BootstrapChatReply {
-  /** AI 的回复文本（提问或策划总结） */
-  reply: string;
-  /** 信息足够时附带的成书草稿 */
-  draft?: BootstrapDraft | null;
 }
 
 /** 对话消息 */
@@ -131,7 +126,7 @@ export interface ScanHit {
   context: string;
 }
 
-/** AI 起书会话归档 */
+/** 会话归档（起书向导 bootstrap / 风格对话 style 共用） */
 export interface ChatSession {
   id: number;
   title: string;
@@ -139,8 +134,44 @@ export interface ChatSession {
   messages: string;
   /** 产出的草稿（JSON 字符串，空 = 未产出） */
   draft: string;
+  /** 场景：bootstrap 起书向导 / style 风格对话 */
+  scene: string;
   created_at: number;
   updated_at: number;
+}
+
+/** 设定变更台账行（AI 从章节提取，只读查看） */
+export interface LoreChange {
+  id: number;
+  chapter_id: number;
+  chapter_title: string;
+  chapter_order: number;
+  /** 命中的现有条目 id（null = 新登场事物） */
+  entry_id: number | null;
+  entry_title: string;
+  category: string;
+  /** new 登场 / update 变更 / retire 退场 */
+  kind: "new" | "update" | "retire";
+  detail: string;
+  created_at: number;
+}
+
+/** 番茄在线搜书结果 */
+export interface FqBook {
+  book_id: string;
+  name: string;
+  author: string;
+  category: string;
+  word_number: number;
+  abstract: string;
+}
+
+/** 番茄蒸馏样本（前几章正文，供风格蒸馏） */
+export interface FqSample {
+  name: string;
+  author: string;
+  chars: number;
+  text: string;
 }
 
 /** 大纲节点（分卷/情节节点） */
@@ -152,6 +183,8 @@ export interface OutlineItem {
   order_index: number;
   /** planned / done */
   status: string;
+  /** 按剧情体量预估的本卷章数（0 = 未预估） */
+  target_chapters: number;
   created_at: number;
   updated_at: number;
 }

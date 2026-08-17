@@ -78,7 +78,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
       return;
     }
     void api
-      .getLatestChatSession()
+      .getLatestChatSession("bootstrap")
       .then((s) => {
         if (!s) return;
         try {
@@ -99,7 +99,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
     if (clean.length <= 1) return; // 只有开场白没什么可存的
     const title = clean.find((m) => m.role === "user")?.text.slice(0, 20) ?? "新会话";
     void api
-      .saveChatSession(sid, title, JSON.stringify(clean), d ? JSON.stringify(d) : "")
+      .saveChatSession(sid, title, JSON.stringify(clean), d ? JSON.stringify(d) : "", "bootstrap")
       .then((id) => setSessionId(id))
       .catch(console.error);
   };
@@ -131,7 +131,7 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
       return;
     }
     try {
-      setHistory(await api.listChatSessions());
+      setHistory(await api.listChatSessions("bootstrap"));
     } catch (e) {
       setError(String(e));
     }
@@ -521,6 +521,22 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
                           onChange={(e) => {
                             const next = [...(draft.outline ?? [])];
                             next[i] = { ...o, title: e.target.value };
+                            setDraft({ ...draft, outline: next });
+                          }}
+                        />
+                        <input
+                          className="w-16 shrink-0 rounded-lg bg-surface px-1.5 py-1 text-center text-[11px] text-body outline-none placeholder:text-faint"
+                          placeholder="约N章"
+                          title="本卷预估章数：按剧情体量估（冲突重的卷长、过渡卷短），不要平均分"
+                          inputMode="numeric"
+                          value={o.target_chapters || ""}
+                          onChange={(e) => {
+                            const next = [...(draft.outline ?? [])];
+                            next[i] = {
+                              ...o,
+                              target_chapters:
+                                parseInt(e.target.value, 10) || undefined,
+                            };
                             setDraft({ ...draft, outline: next });
                           }}
                         />
