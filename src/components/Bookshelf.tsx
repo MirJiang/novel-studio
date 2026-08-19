@@ -15,6 +15,8 @@ interface BookshelfProps {
   ) => void;
   /** 打开 AI 起书向导（整页覆盖层，App 常驻挂载） */
   onOpenWizard: () => void;
+  /** 导入本地书籍（选文件 → 解析入库），Promise 驱动按钮 busy 态 */
+  onImport: () => Promise<void>;
   onRename: (id: number, name: string) => void;
   onDelete: (id: number) => void;
 }
@@ -45,6 +47,7 @@ export function Bookshelf(props: BookshelfProps) {
             </span>
             <div className="ml-auto flex items-center gap-2">
               <NewBookButton onCreate={props.onCreate} />
+              <ImportBookButton onImport={props.onImport} />
               <button
                 className="flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
                 onClick={props.onOpenWizard}
@@ -259,6 +262,24 @@ function BookCard({
 function parseWords(s: string): number | undefined {
   const n = parseInt(s, 10);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** 导入本地书籍：txt/md/epub/docx，导入期间按钮转 busy */
+function ImportBookButton({ onImport }: { onImport: () => Promise<void> }) {
+  const [importing, setImporting] = useState(false);
+  return (
+    <button
+      className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-50"
+      disabled={importing}
+      title="支持 txt / md / epub / docx"
+      onClick={() => {
+        setImporting(true);
+        void onImport().finally(() => setImporting(false));
+      }}
+    >
+      {importing ? "导入中…" : "导入书籍"}
+    </button>
+  );
 }
 
 /** 空白创建：次级入口，点开弹出小卡片（书名 + 可选字数目标 + 写作风格） */

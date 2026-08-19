@@ -235,12 +235,15 @@ pub async fn fq_distill_sample(
     max_chars: Option<usize>,
 ) -> Result<FqSample, String> {
     let id = book_id.trim().to_string();
-    let max = max_chars.unwrap_or(SAMPLE_CHARS);
+    // 自选样本字数（默认 1.5 万）；蒸馏输入上限 1.2 万走头中尾三段取样，
+    // 大样本的意义在于中/尾段取样位置更深。防呆上限 30 万字
+    let max = max_chars.unwrap_or(SAMPLE_CHARS).clamp(2000, 300_000);
     tokio::task::spawn_blocking(move || {
         let client = new_client()?;
         let cat = catalog_blocking(&id)?;
-        // 一章约 2~3 千字，抓一批（30 章）足够样本量
-        let take = cat.chapters.len().min(BATCH_SIZE);
+        // 一章约 2~3 千字，按 2200 保守估算 + 5 章余量；章数防呆上限 300（10 批 ≈ 4s 限速延迟）
+        let est = (max / 2200 + 5).min(300);
+        let take = cat.chapters.len().min(est);
         let results = fetch_chapters(&client, &id, &cat.chapters[..take], |_, _| {})?;
         let mut text = String::new();
         for (title, body) in &results {

@@ -748,9 +748,25 @@ impl Db {
         })
     }
 
+    /// 批量插入章节（本地书籍导入用）：单事务写入，word_count 现算，未分卷
+    pub fn create_chapters_bulk(&self, project_id: i64, items: &[(String, String)]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let ts = now();
+        let tx = conn.transaction()?;
+        for (i, (title, content)) in items.iter().enumerate() {
+            let word_count = count_words(&html_to_text(content));
+            tx.execute(
+                "INSERT INTO chapters (project_id, title, content, order_index, word_count, outline_item_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)",
+                params![project_id, title, content, i as i64 + 1, word_count, ts],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 手动调整章节所属卷（0 = 未分卷）
-    pub fn set_chapter_volume(&self, chapter_id: i64, outline_item_id: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+    pub fn set_chapter_volume(&self, chapter_id: i64, outline_item_id: i64) -> Result<()> {        let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE chapters SET outline_item_id = ?1 WHERE id = ?2",
             params![outline_item_id, chapter_id],

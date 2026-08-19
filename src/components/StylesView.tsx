@@ -93,6 +93,12 @@ export function StylesView({
   const [fqAction, setFqAction] = useState<string | null>(null); // 进行中的操作
   const [fqProgress, setFqProgress] = useState<string | null>(null); // 下载进度
   const [fqInfo, setFqInfo] = useState<string | null>(null);
+  /** 正在确认样本字数的书（行内展开确认条） */
+  const [fqPickId, setFqPickId] = useState<string | null>(null);
+  const [fqChars, setFqChars] = useState(15000); // 蒸馏样本目标字数
+
+  /** 风格详情弹层（点卡片打开） */
+  const [detail, setDetail] = useState<Style | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -427,14 +433,17 @@ export function StylesView({
     }
   };
 
-  /** 直接蒸馏：抓前几章样本 → 走既有蒸馏管线入库 */
-  const fqDistill = async (b: FqBook) => {
+  /** 直接蒸馏：按自选字数抓样本 → 走既有蒸馏管线入库 */
+  const fqDistill = async (b: FqBook, maxChars: number) => {
     if (fqAction) return;
     setError(null);
     setFqInfo(null);
-    setFqAction(`正在抓《${b.name}》样本（前几章，约半分钟）…`);
+    setFqPickId(null);
+    setFqAction(
+      `正在抓《${b.name}》样本（目标 ${maxChars.toLocaleString()} 字，样本越大抓取越久）…`
+    );
     try {
-      const sample = await api.fqDistillSample(b.book_id);
+      const sample = await api.fqDistillSample(b.book_id, maxChars);
       setFqAction(`样本 ${sample.chars.toLocaleString()} 字，蒸馏中…`);
       await api.distillStyle(
         sample.name,
@@ -561,10 +570,15 @@ export function StylesView({
           </div>
         )}
 
-        {/* 风格卡列表（按页签过滤，小卡片网格） */}
+        {/* 风格卡列表（按页签过滤，小卡片网格；点卡片看详情） */}
         <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-3">
           {tabStyles.map((s) => (
-            <div key={s.id} className="flex flex-col rounded-2xl bg-surface p-4 shadow-card">
+            <div
+              key={s.id}
+              onClick={() => setDetail(s)}
+              title="点击查看完整风格卡"
+              className="flex cursor-pointer flex-col rounded-2xl bg-surface p-4 shadow-card transition-shadow hover:shadow-lift"
+            >
               <div className="flex items-center gap-2">
                 <span className="truncate text-[14px] font-bold text-ink">{s.name}</span>
                 {s.source === "内置" && (
@@ -577,7 +591,10 @@ export function StylesView({
                     样本 {s.sample_chars.toLocaleString()} 字
                   </span>
                 )}
-                <div className="ml-auto flex items-center gap-2">
+                <div
+                  className="ml-auto flex items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {tab === "text" &&
                     currentProjectId != null &&
                     (currentProjectStyleId === s.id ? (
@@ -956,7 +973,8 @@ export function StylesView({
               </button>
             </div>
             <p className="mt-2 shrink-0 text-[11px] leading-4 text-faint">
-              内容来自番茄小说公开接口，仅供个人学习与风格分析，请勿传播或商用；蒸馏只抓开头几章样本
+              内容来自番茄小说公开接口，仅供个人学习与风格分析，请勿传播或商用；蒸馏默认抓前 1.5
+              万字样本，可自选——样本越大，头/中/尾三段取样越全面
             </p>
 
             {(fqAction || fqProgress) && (
@@ -1005,25 +1023,176 @@ export function StylesView({
                         </p>
                       )}
                       <div className="mt-2 flex gap-2">
-                        <button
-                          disabled={fqAction != null}
-                          onClick={() => void fqDistill(b)}
-                          className="rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
-                        >
-                          蒸馏风格
-                        </button>
-                        <button
-                          disabled={fqAction != null}
-                          onClick={() => void fqDownloadBook(b)}
-                          className="rounded-full bg-card/70 px-3.5 py-1.5 text-[12px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
-                        >
-                          下载 txt
-                        </button>
+                        {fqPickId === b.book_id ? (
+                          /* 蒸馏确认条：自选样本字数 */
+                          <div className="flex flex-1 flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] text-muted">样本字数</span>
+                            {[5000, 15000, 30000, 50000].map((n) => (
+                              <button
+                                key={n}
+                                onClick={() => setFqChars(n)}
+                                className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${
+                                  fqChars === n
+                                    ? "bg-accent text-surface shadow-glow"
+                                    : "bg-card/70 text-body shadow-card hover:bg-surface"
+                                }`}
+                              >
+                                {n / 10000 >= 1 ? `${n / 10000} 万` : `${n / 1000} 千`}
+                              </button>
+                            ))}
+                            <input
+                              className="w-20 rounded-full bg-surface px-2.5 py-1 text-[11px] text-ink outline-none placeholder:text-faint focus:bg-surface2"
+                              inputMode="numeric"
+                              placeholder="自定义"
+                              value={fqChars > 0 ? fqChars : ""}
+                              onChange={(e) => {
+                                const n = parseInt(e.target.value, 10);
+                                setFqChars(Number.isFinite(n) ? n : 0);
+                              }}
+                            />
+                            <button
+                              disabled={fqChars < 2000 || fqChars > 300000 || fqAction != null}
+                              onClick={() => void fqDistill(b, fqChars)}
+                              className="rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+                            >
+                              开始蒸馏
+                            </button>
+                            <button
+                              onClick={() => setFqPickId(null)}
+                              className="px-1.5 text-[12px] text-muted hover:text-body"
+                            >
+                              取消
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              disabled={fqAction != null}
+                              onClick={() => {
+                                setFqPickId(b.book_id);
+                                setFqChars(15000);
+                              }}
+                              className="rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+                            >
+                              蒸馏风格
+                            </button>
+                            <button
+                              disabled={fqAction != null}
+                              onClick={() => void fqDownloadBook(b)}
+                              className="rounded-full bg-card/70 px-3.5 py-1.5 text-[12px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+                            >
+                              下载 txt
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 风格详情弹层：完整风格卡 + 元信息 + 操作聚合 */}
+      {detail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={() => setDetail(null)}
+        >
+          <div
+            className="mx-4 flex max-h-[82vh] w-full max-w-2xl flex-col rounded-2xl bg-surface p-5 shadow-float"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center gap-2">
+              <p className="text-[15px] font-bold text-ink">{detail.name}</p>
+              <span className="rounded-full bg-track px-2 py-0.5 text-[10px] text-muted">
+                {detail.kind === "image"
+                  ? "图片画风"
+                  : detail.kind === "video"
+                    ? "视频运镜"
+                    : "小说写作"}
+              </span>
+              {detail.source === "内置" && (
+                <span className="rounded-full bg-track px-2 py-0.5 text-[10px] text-muted">
+                  内置
+                </span>
+              )}
+              <button
+                className="ml-auto text-faint hover:text-body"
+                onClick={() => setDetail(null)}
+              >
+                ×
+              </button>
+            </div>
+            <p className="mt-1.5 shrink-0 text-[11px] text-faint">
+              来源：{detail.source || "未知"}
+              {detail.sample_chars > 0 &&
+                ` · 样本 ${detail.sample_chars.toLocaleString()} 字`}
+              {` · 更新于 ${new Date(detail.updated_at * 1000).toLocaleString("zh-CN", {
+                year: "numeric",
+                month: "numeric",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}`}
+            </p>
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto rounded-2xl bg-canvas p-4">
+              <p className="text-xs font-medium text-muted">
+                {detail.kind === "text" || !detail.kind
+                  ? "风格卡（写作时注入 prompt）"
+                  : "锚点词（生成时注入 prompt）"}
+              </p>
+              <p className="mt-1.5 text-[13px] leading-6 whitespace-pre-wrap text-body">
+                {detail.guide}
+              </p>
+              {detail.example && (
+                <>
+                  <p className="mt-4 text-xs font-medium text-muted">示例片段</p>
+                  <p className="mt-1.5 text-[12px] leading-6 whitespace-pre-wrap text-muted">
+                    {detail.example}
+                  </p>
+                </>
+              )}
+            </div>
+            <div className="mt-3 flex shrink-0 items-center gap-2">
+              {(detail.kind === "text" || !detail.kind) &&
+                currentProjectId != null &&
+                (currentProjectStyleId === detail.id ? (
+                  <span className="rounded-full bg-pgreen px-3 py-1.5 text-[12px] text-pgreen-t">
+                    当前作品使用中
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      void applyToCurrent(detail.id);
+                      setDetail(null);
+                    }}
+                    className="rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
+                  >
+                    应用到当前作品
+                  </button>
+                ))}
+              <button
+                onClick={() => {
+                  const s = detail;
+                  setDetail(null);
+                  openEdit(s);
+                }}
+                className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+              >
+                对话优化
+              </button>
+              <button
+                onClick={() => {
+                  const s = detail;
+                  setDetail(null);
+                  void removeStyle(s.id);
+                }}
+                className="ml-auto rounded-full bg-card/70 px-4 py-2 text-[13px] text-pred-t shadow-card transition-colors hover:bg-pred"
+              >
+                删除风格
+              </button>
             </div>
           </div>
         </div>

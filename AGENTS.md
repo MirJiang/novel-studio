@@ -34,11 +34,12 @@ src/
     AppRail.tsx               应用级导航栏（贯穿书架/写作态）：书架/写作/体检 + 风格库 + 视频/发布/任务 + 导出/设置（封面已并入书籍详情与写作侧栏）
     Bookshelf.tsx             书架首页：封面卡片网格（取最新封面，无封面用渐变首字块）+ 新建作品；
                               卡片底部常驻「写作 / 详情」双按钮（防呆，不靠 ⋯ 藏入口）
-    BookDetailView.tsx        书籍详情覆盖层：概览（简介/统计/进写作）· 设定（分类浏览 + 逐条生成设定图）· 封面工坊
+    BookDetailView.tsx        书籍详情覆盖层：概览（简介 AI 生成/手改）· 大纲（分卷进度 + AI 生成）· 设定（分类浏览 + 逐条生成设定图）· 封面工坊
     Sidebar.tsx               写作态侧栏：章节/设定库双 Tab（二级面板）
     Editor.tsx                写作编辑器：续写/划词浮动条/摘要面板/自动保存
     BatchWriteDialog.tsx      批量写章弹层：N 章/写完整本书；可最小化后台跑，右下角浮条看进度（状态在 App 层）
-    OutlineView.tsx           大纲视图：番茄风简介（AI 生成/手改）+ 分卷大纲（进度管控）
+    OutlineView.tsx           大纲视图：番茄风简介（AI 生成/手改）+ 分卷大纲（进度管控）；
+                              SynopsisSection / OutlineSection 拆为共用组件，书籍详情页概览/大纲页签复用
     LoreEditor.tsx            设定词条编辑器（分类/关键词/常驻注入/参考图/自动保存）
     CoverView.tsx             封面工坊：描述词表单（可留空，AI 按简介/设定/正文自动总结）+ 预览 + 历史缩略图
     CheckView.tsx             全书体检：摘要覆盖度 + 批量补齐 + 流式报告 + 历史
@@ -55,6 +56,11 @@ src-tauri/src/
   commands.rs                 写作/设定/封面/体检等 #[tauri::command] + prompt 组装 + 注入逻辑
   commands_style.rs           风格库命令：LLM 蒸馏风格卡 + CRUD（样本由用户本地上传）
   commands_publish.rs         发布：番茄/抖音第二窗口 + eval 注入填充（location.hash 回读结果）
+  book_import.rs              本地书籍导入：txt/md（严格 UTF-8 → 失败回退 GB18030，老书站 txt 多为 GBK）、
+                              epub（解 zip → container.xml → OPF 书脊逐篇剥标签）、docx（document.xml 剥标签）；
+                              行首标题切章（第N章/卷/回、Chapter N、序章楔子番外等；「节/集」需跟分隔符防
+                              「第一节课」误判），识别不到标题按 ~2 万字空行切块；目录页/卷名行空壳（<30 字）过滤；
+                              章节单事务批量入库（db.create_chapters_bulk），失败先删作品不留半截
   commands_video.rs           视频流水线命令：口播稿/分镜/逐镜生图/镜头视频/配音/合成
   tasks.rs                    任务队列：单 worker 串行执行 + Notify 唤醒 + 入队/取消/重试/清理命令
   video_gen.rs                火山方舟 Seedance 图生视频客户端（创建任务→10s 轮询→下载落盘）
@@ -101,10 +107,10 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 
 ### 命令清单（invoke 名 → 作用）
 
-- 作品/章节：`create_project(name, description?, targetTotalWords?, targetChapterWords?)` `update_project_targets` `list_projects` `rename_project` `delete_project`（级联清磁盘目录）`create_chapter` `list_chapters` `get_chapter` `save_chapter` `delete_chapter` `save_summary`
+- 作品/章节：`create_project(name, description?, targetTotalWords?, targetChapterWords?)` `update_project_targets` `list_projects` `rename_project` `delete_project`（级联清磁盘目录）`create_chapter` `list_chapters` `get_chapter` `save_chapter` `delete_chapter` `save_summary` `import_local_book(path)`（本地书籍导入 → { project, chapters, words, format }）
 - 设定库：`create_lore_entry` `list_lore_entries` `update_lore_entry` `delete_lore_entry` `set_lore_ref_image`（上传人物卡参考图）`remove_lore_ref_image` `generate_lore_ref_image`（按分类出设定图：人物三视图/地点场景概念图/物品设定图，D28） `collect_lore_entries`（AI 从摘要链搜集人物/地点/物品词条入库，8000 字预算，已登记标题跳过）
 - 视频：`create_video(project_id, title, chapter_ids, mode?)`（mode: image 静图运镜 / video 图生视频）`generate_shot_video`（单镜重跑）`set_video_style`（全片统一画风 v13）`set_video_extras`（BGM/片头片尾，素材拷入视频目录）`list_videos` `get_video_detail` `delete_video` `save_narration` `update_shot_prompt` `generate_narration`（流式）`generate_storyboard` `generate_shot_image`（单镜重绘）`generate_missing_images`（进度）`synthesize_voices`（进度）`compose_video`（进度）`open_video_folder`
-- 番茄搜书：`fq_search(query)` `fq_distill_sample(book_id)`（前几章样本 ~1.5 万字）`fq_download(book_id, path, channel)`（进度事件）
+- 番茄搜书：`fq_search(query)` `fq_distill_sample(book_id, max_chars?)`（样本字数可选 2000~30 万，默认 1.5 万；按 2200 字/章估算抓取量，≤300 章防呆）`fq_download(book_id, path, channel)`（进度事件）
 - 设置：`get_setting` `set_setting`
 - 导出：`export_project(project_id, path)` → txt
 - 封面：`generate_cover(project_id, prompt, title, author)` → { path, data_url }；`list_covers`（预览走 asset 协议 fileUrl）
@@ -171,8 +177,13 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
 - AI 续写：流式、注入设定库 + 前情摘要 + 前文尾部，meta 明细可见
 - 划词 改写/润色/扩写：选区浮动条，位置感知流式替换（`makeInserter`）
 - 设定库：关键词触发 + 常驻注入 + 预算截断
-- 番茄搜书：风格库「番茄搜书」在线搜索 → 一键蒸馏风格（抓前几章样本走既有蒸馏管线）/ 全本下载 txt（进度条）；
+- 番茄搜书：风格库「番茄搜书」在线搜索 → 一键蒸馏风格（抓开头样本走既有蒸馏管线，字数可选：5 千/1.5 万/3 万/5 万档位或自定义，蒸馏输入 1.2 万头中尾三段取样，大样本=中尾段取样更深）/ 全本下载 txt（进度条）；
   接口：官方 API 直连（Cargo git 依赖 fanqie-rs，锁定 rev 906c6fd；官网阅读页有字体混淆，官方 App 接口返回密文由该库解密，文本干净）
+- 风格详情：风格库点卡片开详情弹层——完整风格卡/锚点词 + 示例片段全文 + 来源/样本/时间元信息，
+  应用/对话优化/删除操作聚合在底部
+- 本地书籍导入：书架「导入书籍」按钮 → 系统选文件（txt/md/epub/docx）→ 后端解析切章 → 建作品 +
+  章节批量入库 → 直接进入写作态；GBK 编码自适应、目录页空壳过滤、无标题全书按 ~2 万字切块
+  （book_import.rs，12 个单元测试覆盖切章/编码/epub/docx 解析）
 - 前情摘要：单章生成（长章取头 3500+尾 2000）/批量补齐（进度条）
 - 设定变更台账：AI 从章节提取设定持久变更（登场/变更/退场），只读查看无审核流；
   自动挂载在摘要生成/批量补齐/批量写章之后（失败静默不中断），手动可在台账页按章提取/全部补齐；
@@ -221,7 +232,9 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
   （批量写章上限 2000 章防呆；ai_bootstrap_chat_stream 流式 + AICreateWizard.tsx 整页覆盖层；会话自动存 chat_sessions 表（v11），
   「新会话」归档当前、「历史」面板可回看/继续/删除；创建成功后自动开新会话，旧的不丢）
 - 作品简介与大纲：侧栏第三 Tab；番茄风简介 AI 生成/手改；分卷大纲节点可编辑可标记完成，
-  进度条管控；**大纲注入续写 prompt**（600 字预算，首个未完成节点标 ◀当前）
+  进度条管控；**大纲注入续写 prompt**（600 字预算，首个未完成节点标 ◀当前）；
+  书籍详情页概览签复用简介区（AI 生成简介）、新增大纲页签复用大纲区（AI 生成大纲 + 节点编辑），
+  与写作态同一组件同一数据
 - 批量写章：Editor「批量写章」弹层（零章节新书的空状态页也有入口）→ 后端 generate_chapters
   逐章 chat_once 落库 + 自动摘要（摘要链不断档），可最小化后台跑（右下角浮条 + toast 提醒），可中途取消（已写保留），
   章节列表随生成实时刷新，收尾时 LLM 按本次摘要自动推进大纲 ◀当前 节点；

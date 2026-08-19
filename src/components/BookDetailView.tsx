@@ -3,21 +3,24 @@ import { api } from "../lib/api";
 import { IMAGE_PRESETS } from "../lib/stylePresets";
 import { LORE_CATEGORIES, type LoreEntry, type Project, type Style } from "../types";
 import { CoverView } from "./CoverView";
+import { OutlineSection, SynopsisSection } from "./OutlineView";
 
 interface BookDetailProps {
   project: Project;
   onClose: () => void;
   /** 进入写作态（恢复阅读位置） */
   onOpenWrite: (id: number) => void;
+  /** 简介/标签等作品信息变更后刷新外部作品列表 */
+  onProjectChanged: () => void;
 }
 
-type Tab = "overview" | "lore" | "cover";
+type Tab = "overview" | "outline" | "lore" | "cover";
 
 /**
  * 书籍详情（书架 ⋯ 菜单进入，整页覆盖层）：
- * 概览（简介/统计/进写作）· 设定（按分类浏览人物/地点/物品…，逐条生成设定图）· 封面工坊
+ * 概览（简介 AI 生成/手改）· 大纲（AI 生成分卷 + 节点编辑）· 设定（分类浏览 + 逐条生成设定图）· 封面工坊
  */
-export function BookDetailView({ project, onClose, onOpenWrite }: BookDetailProps) {
+export function BookDetailView({ project, onClose, onOpenWrite, onProjectChanged }: BookDetailProps) {
   const [tab, setTab] = useState<Tab>("overview");
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [stats, setStats] = useState<{ chapters: number; words: number } | null>(null);
@@ -86,6 +89,7 @@ export function BookDetailView({ project, onClose, onOpenWrite }: BookDetailProp
           {(
             [
               ["overview", "概览"],
+              ["outline", "大纲"],
               ["lore", "设定"],
               ["cover", "封面"],
             ] as [Tab, string][]
@@ -122,7 +126,16 @@ export function BookDetailView({ project, onClose, onOpenWrite }: BookDetailProp
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "overview" ? (
-          <OverviewTab project={project} />
+          <div className="mx-auto max-w-[720px] px-8 py-4">
+            <SynopsisSection project={project} onProjectChanged={onProjectChanged} />
+            <p className="mt-5 text-[11px] leading-5 text-faint">
+              大纲 / 设定 / 封面在上方页签；正文的写作、修改请点「进入写作」
+            </p>
+          </div>
+        ) : tab === "outline" ? (
+          <div className="mx-auto max-w-[720px] px-8 py-4">
+            <OutlineSection project={project} />
+          </div>
         ) : tab === "lore" ? (
           <LoreTab
             projectId={project.id}
@@ -133,26 +146,6 @@ export function BookDetailView({ project, onClose, onOpenWrite }: BookDetailProp
           <CoverView projectId={project.id} projectName={project.name} />
         )}
       </div>
-    </div>
-  );
-}
-
-function OverviewTab({ project }: { project: Project }) {
-  return (
-    <div className="mx-auto max-w-[720px] px-8 py-4">
-      <p className="text-xs font-medium text-muted">作品简介</p>
-      {project.synopsis.trim() ? (
-        <p className="mt-2 rounded-2xl bg-surface p-5 text-[14px] leading-7 whitespace-pre-wrap text-body shadow-card">
-          {project.synopsis}
-        </p>
-      ) : (
-        <p className="mt-2 rounded-2xl bg-card/45 p-5 text-[13px] text-faint">
-          还没有简介，到写作态「大纲」页签可让 AI 生成
-        </p>
-      )}
-      <p className="mt-5 text-[11px] leading-5 text-faint">
-        设定与封面在上方页签；正文的写作、修改请点「进入写作」
-      </p>
     </div>
   );
 }

@@ -4,6 +4,7 @@ mod commands;
 mod commands_publish;
 mod commands_style;
 mod commands_video;
+mod book_import;
 mod db;
 mod fanqie;
 mod image_gen;
@@ -29,6 +30,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::create_project,
+            book_import::import_local_book,
             commands::update_project_targets,
             commands::list_projects,
             commands::rename_project,

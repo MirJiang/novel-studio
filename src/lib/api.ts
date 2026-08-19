@@ -26,6 +26,14 @@ export interface CoverResult {
   prompt: string;
 }
 
+/** 本地书籍导入结果 */
+export interface ImportBookResult {
+  project: Project;
+  chapters: number;
+  words: number;
+  format: string;
+}
+
 /**
  * 全部后端调用的统一封装。
  * 注意：未来如果出网页版，只需把这里换成 fetch 实现，业务组件不用动。
@@ -128,14 +136,32 @@ export const api = {
       filters: [{ name: "文本文件", extensions: ["txt"] }],
     }),
 
+  /** 选择本地书籍文件（导入用），取消返回 null */
+  pickBookFile: async () => {
+    const r = await open({
+      multiple: false,
+      filters: [
+        { name: "书籍文件", extensions: ["txt", "md", "markdown", "epub", "docx"] },
+      ],
+    });
+    return typeof r === "string" ? r : null;
+  },
+
+  /** 导入本地书籍：解析 + 建作品 + 章节批量入库，返回作品与统计 */
+  importLocalBook: (path: string) =>
+    invoke<ImportBookResult>("import_local_book", { path }),
+
   // ---------- 番茄在线搜书（仅供个人学习与风格分析） ----------
 
   /** 在线搜索番茄小说（公开中继 API） */
   fqSearch: (query: string) => invoke<FqBook[]>("fq_search", { query }),
 
-  /** 抓蒸馏样本：从第 1 章顺序抓到约 1.5 万字 */
-  fqDistillSample: (bookId: string) =>
-    invoke<FqSample>("fq_distill_sample", { bookId }),
+  /** 抓蒸馏样本：从第 1 章顺序抓到目标字数（默认 15000，2000~300000） */
+  fqDistillSample: (bookId: string, maxChars?: number) =>
+    invoke<FqSample>("fq_distill_sample", {
+      bookId,
+      maxChars: maxChars ?? null,
+    }),
 
   /** 下载全本为 txt（进度事件；失败章节留占位行不中断），返回结果说明 */
   fqDownload: (

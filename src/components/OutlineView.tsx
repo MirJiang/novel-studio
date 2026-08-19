@@ -10,17 +10,106 @@ interface OutlineViewProps {
 /**
  * 大纲视图：作品简介（番茄风卖点）+ 分卷大纲（进度管控）。
  * 大纲会注入 AI 续写 prompt，让模型知道当前进度与走向。
+ * 两个区块拆成共用组件：写作态大纲页与书籍详情页（概览/大纲页签）复用。
  */
 export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
-  // 简介
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-[680px] px-8 pt-6 pb-20">
+        <SynopsisSection project={project} onProjectChanged={onProjectChanged} />
+        <OutlineSection project={project} className="mt-5" />
+      </div>
+    </div>
+  );
+}
+
+/** 作品简介区：题材短标签 + 番茄风简介，AI 生成 / 手改防抖自动保存 */
+export function SynopsisSection({
+  project,
+  onProjectChanged,
+}: {
+  project: Project;
+  onProjectChanged: () => void;
+}) {
   const [synopsis, setSynopsis] = useState(project.synopsis);
   const [description, setDescription] = useState(project.description);
-  const [synopsisBusy, setSynopsisBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const saveTimer = useRef<number | null>(null);
 
-  // 大纲
+  // 简介/标签 防抖保存
+  const scheduleSaveInfo = (desc: string, syn: string) => {
+    if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      void api.saveProjectInfo(project.id, desc, syn).then(onProjectChanged);
+    }, 800);
+  };
+
+  const runSynopsis = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const text = await api.generateSynopsis(project.id);
+      setSynopsis(text);
+      onProjectChanged();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-2xl bg-surface p-5 shadow-card">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-ink">作品简介</h3>
+        <button
+          disabled={busy}
+          onClick={() => void runSynopsis()}
+          className="rounded-full bg-accent px-3 py-1 text-[11px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+        >
+          {busy ? "生成中…" : synopsis ? "AI 重写" : "AI 生成简介"}
+        </button>
+      </div>
+      <input
+        className="mt-3 w-full rounded-[10px] bg-canvas px-3 py-1.5 text-xs text-body outline-none placeholder:text-faint focus:bg-surface2"
+        placeholder="题材短标签（书架卡片显示），如：都市 · 系统流"
+        value={description}
+        onChange={(e) => {
+          setDescription(e.target.value);
+          scheduleSaveInfo(e.target.value, synopsis);
+        }}
+      />
+      <textarea
+        className="mt-2 h-32 w-full resize-none rounded-[10px] bg-canvas p-3 text-[13px] leading-6 text-body outline-none placeholder:text-faint focus:bg-surface2"
+        placeholder="番茄风作品简介：第一句就是钩子，点出金手指与最大看点，结尾抛悬念…"
+        value={synopsis}
+        onChange={(e) => {
+          setSynopsis(e.target.value);
+          scheduleSaveInfo(description, e.target.value);
+        }}
+      />
+      <p className="mt-1 text-[11px] text-faint">修改自动保存</p>
+      {error && (
+        <p className="mt-2 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** 分卷大纲区：进度条 + 节点编辑 + AI 生成（整表替换，已有节点时先确认） */
+export function OutlineSection({
+  project,
+  className,
+}: {
+  project: Project;
+  className?: string;
+}) {
   const [items, setItems] = useState<OutlineItem[]>([]);
-  const [outlineBusy, setOutlineBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 各卷已写章数（进度按章显示用）
   const [chapters, setChapters] = useState<ChapterMeta[]>([]);
@@ -47,45 +136,22 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
     return m;
   }, [chapters]);
 
-  // 简介/标签 防抖保存
-  const scheduleSaveInfo = (desc: string, syn: string) => {
-    if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => {
-      void api.saveProjectInfo(project.id, desc, syn).then(onProjectChanged);
-    }, 800);
-  };
-
-  const runSynopsis = async () => {
-    if (synopsisBusy) return;
-    setSynopsisBusy(true);
-    setError(null);
-    try {
-      const text = await api.generateSynopsis(project.id);
-      setSynopsis(text);
-      onProjectChanged();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSynopsisBusy(false);
-    }
-  };
-
   const runOutline = async () => {
-    if (outlineBusy) return;
+    if (busy) return;
     if (
       items.length > 0 &&
       !window.confirm("重新生成会替换现有大纲节点，确定继续吗？")
     ) {
       return;
     }
-    setOutlineBusy(true);
+    setBusy(true);
     setError(null);
     try {
       setItems(await api.generateOutline(project.id));
     } catch (e) {
       setError(String(e));
     } finally {
-      setOutlineBusy(false);
+      setBusy(false);
     }
   };
 
@@ -93,114 +159,75 @@ export function OutlineView({ project, onProjectChanged }: OutlineViewProps) {
   const totalTarget = items.reduce((s, i) => s + i.target_chapters, 0);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-[680px] px-8 pt-6 pb-20">
-        {/* 作品简介 */}
-        <section className="rounded-2xl bg-surface p-5 shadow-card">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-ink">作品简介</h3>
-            <button
-              disabled={synopsisBusy}
-              onClick={() => void runSynopsis()}
-              className="rounded-full bg-accent px-3 py-1 text-[11px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
-            >
-              {synopsisBusy ? "生成中…" : synopsis ? "AI 重写" : "AI 生成简介"}
-            </button>
+    <section className={`rounded-2xl bg-surface p-5 shadow-card ${className ?? ""}`}>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-ink">分卷大纲</h3>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() =>
+              void api
+                .addOutlineItem(project.id, `节点 ${items.length + 1}`)
+                .then(refresh)
+            }
+            className="rounded-full bg-card/70 px-3 py-1 text-[11px] text-body shadow-card transition-colors hover:bg-hover"
+          >
+            ＋ 加节点
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => void runOutline()}
+            className="rounded-full bg-accent px-3 py-1 text-[11px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
+          >
+            {busy
+              ? "生成中…"
+              : items.length > 0
+                ? "AI 重新生成"
+                : "AI 生成大纲"}
+          </button>
+        </div>
+      </div>
+
+      {/* 进度条 */}
+      {items.length > 0 && (
+        <div className="mt-3 flex items-center gap-3">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-track">
+            <div
+              className="h-full rounded-full bg-accent transition-all"
+              style={{
+                width: `${items.length === 0 ? 0 : (done / items.length) * 100}%`,
+              }}
+            />
           </div>
-          <input
-            className="mt-3 w-full rounded-[10px] bg-canvas px-3 py-1.5 text-xs text-body outline-none placeholder:text-faint focus:bg-surface2"
-            placeholder="题材短标签（书架卡片显示），如：都市 · 系统流"
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-              scheduleSaveInfo(e.target.value, synopsis);
-            }}
-          />
-          <textarea
-            className="mt-2 h-32 w-full resize-none rounded-[10px] bg-canvas p-3 text-[13px] leading-6 text-body outline-none placeholder:text-faint focus:bg-surface2"
-            placeholder="番茄风作品简介：第一句就是钩子，点出金手指与最大看点，结尾抛悬念…"
-            value={synopsis}
-            onChange={(e) => {
-              setSynopsis(e.target.value);
-              scheduleSaveInfo(description, e.target.value);
-            }}
-          />
-          <p className="mt-1 text-[11px] text-faint">修改自动保存</p>
-        </section>
+          <span className="text-[11px] text-muted">
+            {done}/{items.length} 节点
+            {totalTarget > 0 &&
+              ` · ${chapters.length} 章 / 全书预估约 ${totalTarget} 章`}
+          </span>
+        </div>
+      )}
 
-        {/* 分卷大纲 */}
-        <section className="mt-5 rounded-2xl bg-surface p-5 shadow-card">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-ink">分卷大纲</h3>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() =>
-                  void api
-                    .addOutlineItem(project.id, `节点 ${items.length + 1}`)
-                    .then(refresh)
-                }
-                className="rounded-full bg-card/70 px-3 py-1 text-[11px] text-body shadow-card transition-colors hover:bg-hover"
-              >
-                ＋ 加节点
-              </button>
-              <button
-                disabled={outlineBusy}
-                onClick={() => void runOutline()}
-                className="rounded-full bg-accent px-3 py-1 text-[11px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
-              >
-                {outlineBusy
-                  ? "生成中…"
-                  : items.length > 0
-                    ? "AI 重新生成"
-                    : "AI 生成大纲"}
-              </button>
-            </div>
-          </div>
-
-          {/* 进度条 */}
-          {items.length > 0 && (
-            <div className="mt-3 flex items-center gap-3">
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-track">
-                <div
-                  className="h-full rounded-full bg-accent transition-all"
-                  style={{
-                    width: `${items.length === 0 ? 0 : (done / items.length) * 100}%`,
-                  }}
-                />
-              </div>
-              <span className="text-[11px] text-muted">
-                {done}/{items.length} 节点
-                {totalTarget > 0 &&
-                  ` · ${chapters.length} 章 / 全书预估约 ${totalTarget} 章`}
-              </span>
-            </div>
-          )}
-
-          <div className="mt-3 flex flex-col gap-2.5">
-            {items.length === 0 && (
-              <p className="py-3 text-center text-xs text-faint">
-                还没有大纲。点「AI 生成大纲」按简介和设定产出分卷节点
-              </p>
-            )}
-            {items.map((item, i) => (
-              <OutlineCard
-                key={item.id}
-                item={item}
-                written={writtenByVolume.get(item.id) ?? 0}
-                current={item.status !== "done" && done === i}
-                onChanged={refresh}
-              />
-            ))}
-          </div>
-        </section>
-
-        {error && (
-          <p className="mt-4 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
-            {error}
+      <div className="mt-3 flex flex-col gap-2.5">
+        {items.length === 0 && (
+          <p className="py-3 text-center text-xs text-faint">
+            还没有大纲。点「AI 生成大纲」按简介和设定产出分卷节点
           </p>
         )}
+        {items.map((item, i) => (
+          <OutlineCard
+            key={item.id}
+            item={item}
+            written={writtenByVolume.get(item.id) ?? 0}
+            current={item.status !== "done" && done === i}
+            onChanged={refresh}
+          />
+        ))}
       </div>
-    </div>
+      {error && (
+        <p className="mt-3 rounded-xl bg-pred px-3.5 py-2.5 text-xs leading-5 text-pred-t">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

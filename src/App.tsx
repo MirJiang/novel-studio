@@ -145,6 +145,22 @@ export default function App() {
     setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)));
   };
 
+  /** 导入本地书籍：选文件 → 后端解析入库 → 直接进入新作品 */
+  const handleImportBook = async () => {
+    const path = await api.pickBookFile();
+    if (!path) return;
+    try {
+      const res = await api.importLocalBook(path);
+      setProjects((prev) => [res.project, ...prev]);
+      showToast(
+        `已导入《${res.project.name}》：${res.chapters} 章 · ${res.words.toLocaleString()} 字`
+      );
+      setCurrentProjectId(res.project.id);
+    } catch (e) {
+      showToast(`导入失败：${e}`);
+    }
+  };
+
   const handleDeleteProject = async (id: number) => {
     await api.deleteProject(id);
     setProjects((prev) => prev.filter((p) => p.id !== id));
@@ -564,6 +580,7 @@ export default function App() {
               setWizardEverOpened(true);
               setWizardOpen(true);
             }}
+            onImport={handleImportBook}
             onRename={(id, name) => void handleRenameProject(id, name)}
             onDelete={(id) => void handleDeleteProject(id)}
           />
@@ -810,6 +827,7 @@ export default function App() {
                   setDetailId(null);
                   void handleOpenProject(id);
                 }}
+                onProjectChanged={() => void api.listProjects().then(setProjects)}
               />
             </div>
           );
