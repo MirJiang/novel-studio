@@ -295,7 +295,7 @@ function ThemeCard({
             <div className="h-1 w-2/3 rounded-full" style={{ background: sub }} />
             <div
               className="mt-1 h-2 w-5 rounded-full"
-              style={{ background: "#0a84ff" }}
+              style={{ background: "#0b6e63" }}
             />
           </div>
         </div>

@@ -14,10 +14,10 @@
   --color-muted: #8e8e93;
   --color-faint: #aeaeb2;
 
-  /* 系统蓝 */
-  --color-accent: #007aff;
-  --color-accent-h: #1a88ff;
-  --color-accent-soft: rgba(0, 122, 255, 0.1);
+  /* 墨青（主色：沉稳、纸墨气，不用网页蓝） */
+  --color-accent: #0b6e63;
+  --color-accent-h: #095c53;
+  --color-accent-soft: rgba(11, 110, 99, 0.1);
 
   /* 粉彩（封面色块兜底、标签） */
   --color-pblue: #e1f3fe;
@@ -36,7 +36,7 @@
   --shadow-card: 0 2px 10px rgba(60, 60, 90, 0.08);
   --shadow-lift: 0 16px 36px rgba(60, 60, 90, 0.16);
   --shadow-float: 0 12px 32px rgba(30, 30, 40, 0.18);
-  --shadow-glow: 0 4px 14px rgba(0, 122, 255, 0.32);
+  --shadow-glow: 0 4px 14px rgba(11, 110, 99, 0.3);
 }
 
 /* ===== 深色主题：只覆盖令牌，组件不用动 ===== */
@@ -53,9 +53,9 @@
   --color-muted: #9c9ca2;
   --color-faint: #6e6e74;
 
-  --color-accent: #0a84ff;
-  --color-accent-h: #2f97ff;
-  --color-accent-soft: rgba(10, 132, 255, 0.2);
+  --color-accent: #3fa796;
+  --color-accent-h: #58bbaa;
+  --color-accent-soft: rgba(63, 167, 150, 0.22);
 
   --color-pblue: #16334a;
   --color-pblue-t: #7ec3f0;
@@ -69,11 +69,11 @@
   --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 16px 36px rgba(0, 0, 0, 0.5);
   --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.55);
-  --shadow-glow: 0 4px 14px rgba(10, 132, 255, 0.4);
+  --shadow-glow: 0 4px 14px rgba(63, 167, 150, 0.4);
 }
 
 :root[data-theme="dark"] ::selection {
-  background: rgba(10, 132, 255, 0.35);
+  background: rgba(63, 167, 150, 0.35);
 }
 
 :root[data-theme="dark"] ::-webkit-scrollbar-thumb {
@@ -90,14 +90,14 @@ body {
   color: var(--color-body);
 }
 
-/* 选中文本：系统蓝淡色 */
+/* 选中文本：墨青淡色 */
 ::selection {
-  background: rgba(0, 122, 255, 0.16);
+  background: rgba(11, 110, 99, 0.16);
 }
 
 /* 键盘焦点可见性 */
 :focus-visible {
-  outline: 2px solid #007aff;
+  outline: 2px solid #0b6e63;
   outline-offset: 1px;
 }
 
