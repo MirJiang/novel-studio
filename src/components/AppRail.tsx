@@ -43,12 +43,12 @@ export function AppRail(props: AppRailProps) {
         }
       />
       <RailItem
-        label="体检"
+        label="评分"
         active={!props.onShelf && props.activeView === "check"}
         onClick={props.onGoCheck}
         icon={
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 12h4l3 8 4-16 3 8h4" />
+            <path d="M12 3l2.7 5.8 6.3.7-4.7 4.3 1.3 6.2L12 16.9 6.4 20l1.3-6.2L3 9.5l6.3-.7L12 3z" />
           </svg>
         }
       />

@@ -64,7 +64,8 @@ export function StylesView({
 
   const [name, setName] = useState("");
   const [text, setText] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
+  /** 已选择的样本文件路径（后端直读，全文不进前端） */
+  const [filePath, setFilePath] = useState<string | null>(null);
   const [distilling, setDistilling] = useState(false);
 
   // 对话生成风格（多轮流式对话，[CARD] 出卡）
@@ -112,13 +113,15 @@ export function StylesView({
     void refresh();
   }, [refresh]);
 
-  const pickFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      setText(String(reader.result ?? ""));
-      if (!name.trim()) setName(file.name.replace(/\.[^.]+$/, ""));
-    };
-    reader.readAsText(file);
+  const pickFile = async () => {
+    const p = await api.pickBookText();
+    if (!p) return;
+    setFilePath(p);
+    setText("");
+    if (!name.trim()) {
+      const stem = p.replace(/\\/g, "/").split("/").pop() ?? "";
+      setName(stem.replace(/\.txt$/i, ""));
+    }
   };
 
   const doDistill = async () => {
@@ -126,9 +129,14 @@ export function StylesView({
     setDistilling(true);
     setError(null);
     try {
-      await api.distillStyle(name.trim(), "本地文本", text);
+      if (filePath) {
+        await api.distillStyleFromFile(name.trim(), filePath);
+      } else {
+        await api.distillStyle(name.trim(), "本地文本", text);
+      }
       setText("");
       setName("");
+      setFilePath(null);
       setDistillOpen(false);
       await refresh();
     } catch (e) {
@@ -890,35 +898,46 @@ export function StylesView({
               onChange={(e) => setName(e.target.value)}
             />
             <button
-              onClick={() => fileRef.current?.click()}
+              onClick={() => void pickFile()}
               className="shrink-0 rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
             >
-              导入 txt
+              {filePath ? "换一个文件" : "导入 txt"}
             </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".txt"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) pickFile(f);
-                e.target.value = "";
-              }}
-            />
           </div>
-          <textarea
-            className="mt-2 h-36 w-full resize-none rounded-[10px] bg-canvas px-3 py-2 text-[13px] leading-6 outline-none placeholder:text-faint focus:bg-surface2"
-            placeholder="或直接粘贴参考文本（至少 500 字，建议几千字以上，蒸馏更准）"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
+          {filePath ? (
+            <div className="mt-2 flex items-center gap-2 rounded-[10px] bg-accent-soft px-3 py-2.5 text-[12px] text-accent">
+              <span className="min-w-0 flex-1 truncate">
+                已选 {filePath.replace(/\\/g, "/").split("/").pop()}
+                <span className="ml-1.5 text-[11px] text-faint">
+                  · 后端直接取样蒸馏，不展示全文
+                </span>
+              </span>
+              <button
+                title="清除，改用粘贴文本"
+                className="shrink-0 text-faint hover:text-body"
+                onClick={() => setFilePath(null)}
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <textarea
+              className="mt-2 h-36 w-full resize-none rounded-[10px] bg-canvas px-3 py-2 text-[13px] leading-6 outline-none placeholder:text-faint focus:bg-surface2"
+              placeholder="或直接粘贴参考文本（至少 500 字，建议几千字以上，蒸馏更准）"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+          )}
           <div className="mt-2 flex items-center justify-between">
             <span className="text-[11px] text-faint">
-              {text.length > 0 ? `已粘贴 ${text.length.toLocaleString()} 字` : ""}
+              {!filePath && text.length > 0
+                ? `已粘贴 ${text.length.toLocaleString()} 字`
+                : ""}
             </span>
             <button
-              disabled={distilling || !name.trim() || text.trim().length < 500}
+              disabled={
+                distilling || !name.trim() || (!filePath && text.trim().length < 500)
+              }
               onClick={() => void doDistill()}
               className="rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
             >

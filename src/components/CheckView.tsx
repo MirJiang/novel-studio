@@ -7,9 +7,16 @@ interface CheckViewProps {
 }
 
 /**
- * 全书体检：基于 设定库 + 各章摘要，检查设定冲突/时间线/伏笔/逻辑。
- * 摘要覆盖度是体检质量的地基，所以提供"补齐摘要"入口。
+ * 全书评分：真人读者视角的总评——总分/维度分/优缺点/文笔/风格与主题贴合度。
+ * 全书正文逐段通读（每批约 7000 字做评注笔记，汇总出报告），不漏掉任何一段；
+ * 摘要链是情节评价的增强材料，所以保留"补齐摘要"入口。
  */
+/** 从报告 Markdown 提取总分（## 总分 节里的 X.X/10），旧格式体检报告提取不到则不显示 */
+function extractScore(text: string): string | null {
+  const m = text.match(/##\s*总分[\s\S]{0,120}?(\d+(?:\.\d+)?)\s*\/\s*10/);
+  return m ? m[1] : null;
+}
+
 export function CheckView({ projectId }: CheckViewProps) {
   const [stats, setStats] = useState<[number, number] | null>(null);
   const [batchProgress, setBatchProgress] = useState<{
@@ -166,10 +173,10 @@ export function CheckView({ projectId }: CheckViewProps) {
       <div className="flex w-72 shrink-0 flex-col bg-card/45">
         <div className="p-5">
           <h2 className="font-display text-lg font-bold tracking-tight text-ink">
-            全书体检
+            全书评分
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted">
-            检查设定冲突 / 时间线 / 伏笔台账 / 逻辑漏洞
+            真人读者视角总评：打分 / 优缺点 / 文笔 / 风格主题贴合
           </p>
 
           <div className="mt-4 rounded-xl bg-card/60 px-3 py-2.5 text-xs text-body shadow-card">
@@ -183,7 +190,7 @@ export function CheckView({ projectId }: CheckViewProps) {
             </span>
             {missing > 0 && (
               <span className="mt-1 block text-muted">
-                体检只看有摘要的章节
+                摘要是情节评价的增强材料，补齐更准
               </span>
             )}
           </div>
@@ -199,12 +206,15 @@ export function CheckView({ projectId }: CheckViewProps) {
           )}
 
           <button
-            disabled={busy || withSummary === 0}
+            disabled={busy || total === 0}
             onClick={() => void runCheck()}
             className="mt-2 w-full rounded-full bg-accent px-3 py-1.5 text-sm font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
           >
-            {checking ? "体检中…" : "开始体检"}
+            {checking ? "评分中…" : "开始评分"}
           </button>
+          <p className="mt-2 text-[11px] leading-4 text-faint">
+            逐段通读全书正文（每段约 7000 字），字数越多耗时越长，中途可切走
+          </p>
 
           {/* 合规扫描 */}
           <div className="mt-5 border-t border-line pt-4">
@@ -287,7 +297,7 @@ export function CheckView({ projectId }: CheckViewProps) {
         {/* 历史报告 */}
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {reports.length === 0 ? (
-            <p className="px-1 py-2 text-xs text-muted">还没有体检报告</p>
+            <p className="px-1 py-2 text-xs text-muted">还没有评分报告</p>
           ) : (
             reports.map((r) => (
               <button
@@ -321,6 +331,19 @@ export function CheckView({ projectId }: CheckViewProps) {
           )}
           {reportText ? (
             <div className="rounded-2xl bg-surface p-6 shadow-card">
+              {(() => {
+                const score = extractScore(reportText);
+                return score != null && !checking ? (
+                  <div className="mb-4 flex items-end gap-2 border-b border-line pb-4">
+                    <span className="font-display text-4xl font-bold text-accent">
+                      {score}
+                    </span>
+                    <span className="pb-1 text-sm text-muted">
+                      / 10 · 真人读者总评
+                    </span>
+                  </div>
+                ) : null;
+              })()}
               <pre className="font-sans text-sm leading-7 whitespace-pre-wrap text-body">
                 {reportText}
                 {checking && <span className="animate-pulse">▍</span>}
@@ -328,7 +351,7 @@ export function CheckView({ projectId }: CheckViewProps) {
             </div>
           ) : (
             <div className="flex h-full min-h-[50vh] items-center justify-center text-sm text-faint">
-              {checking ? "体检报告生成中…" : "点击左侧「开始体检」"}
+              {checking ? "评分报告生成中…" : "点击左侧「开始评分」"}
             </div>
           )}
         </div>

@@ -552,52 +552,66 @@ impl Db {
             .context("迁移 v19 失败")?;
         }
         conn.pragma_update(None, "user_version", 19)?;
+        // v20：内置风格卡改版为纯文笔五节（题材/基调/钩子不进卡，理由见蒸馏 prompt）。
+        // 按「仍是旧六节格式（含【整体基调】）且名字未改」识别要刷新的内置卡；
+        // 旧规格下对话优化过的内置卡会一并刷成标准新版（内置卡视为系统资产，
+        // 用户自己蒸馏/对话生成的卡不受影响）；新库种子本就是新版，UPDATE 空匹配
+        if version < 20 {
+            let ts = now();
+            for (name, guide) in Self::BUILTIN_STYLES {
+                conn.execute(
+                    "UPDATE styles SET guide = ?1, updated_at = ?2
+                     WHERE name = ?3 AND source = '内置' AND guide LIKE '%【整体基调】%'",
+                    params![guide, ts, name],
+                )?;
+            }
+        }
+        conn.pragma_update(None, "user_version", 20)?;
         Ok(())
     }
+
+    /// 内置写作风格卡（v15 首次种子；v20 改版为纯文笔五节——题材/基调/钩子由作者写书时自定，不进卡）。
+    /// source=内置，与用户卡同表同权，可删
+    const BUILTIN_STYLES: [(&str, &str); 4] = [
+        (
+            "番茄爽文风",
+            "【句式与节奏】短句主导，一段一两句，动词推着走；场景切换不写过渡，直接切。
+【用词偏好】口语直白，网感词点到即止；忌成语堆砌与书面腔。
+【叙事视角】第三人称贴主角，心理直给，读者永远比配角知道得多。
+【对话风格】对话多而短，一句一行，情绪外放，少绕弯子。
+【画面与细节】细节只服务动作与反转：关键道具、表情变化，环境一笔带过。",
+        ),
+        (
+            "古龙风",
+            "【句式与节奏】极短句，频繁独行成段，留白即节奏；偶发一句收束全段。
+【用词偏好】白描名词句，动词精准，几乎不用形容词；不解释，让画面说话。
+【叙事视角】第三人称远视角，不进人物内心，全凭动作与选择写人。
+【对话风格】对话短而有机锋，常答非所问，刀藏在客气里。
+【画面与细节】写意一两笔——风、灯、刀光，氛围大于细节，从不描全貌。",
+        ),
+        (
+            "知乎盐选风",
+            "【句式与节奏】口语叙述如当面讲事，段落两三行，句句有信息增量。
+【用词偏好】生活化词汇，数字与专有名词用得具体，适度自嘲。
+【叙事视角】第一人称「我」贴脸，心理活动用吐槽外化，不写内心独白。
+【对话风格】对话像真人聊天，会打断会呛声；关键信息借对话放出。
+【画面与细节】细节取日常真实场景（楼道、工位、外卖盒），真实感优先于美感。",
+        ),
+        (
+            "晋江言情风",
+            "【句式与节奏】长短句错落，情绪高点用短句顿挫；节奏舒缓但有呼吸。
+【用词偏好】精致书面语，意象化表达；情绪词克制，靠动作泄露。
+【叙事视角】第三人称限知贴女主，心理细腻不絮叨，一景一情。
+【对话风格】对话含蓄，言外之意与试探多；重要的话总说不出口。
+【画面与细节】感官细节密——光线、气味、指尖触感，氛围先于事件。",
+        ),
+    ];
 
     /// v15 种子：内置写作风格卡（source=内置，与用户卡同表同权，可删）。
     /// 关联函数拿调用方的连接句柄——migrate 已持有锁，方法式调用会死锁
     fn seed_builtin_styles(conn: &rusqlite::Connection) -> Result<()> {
-        const BUILTIN: [(&str, &str); 4] = [
-            (
-                "番茄爽文风",
-                "【整体基调】快节奏商业爽文，情绪直给，主打解压与代入感。
-【句式与节奏】短句为主，一段一两句，叙事流速快，场景切换干脆。
-【用词偏好】口语化、网感化，用词直白，拒绝华丽辞藻。
-【叙事视角】第三人称贴主角视角，心理活动直写，信息全给读者。
-【对话风格】对话占比高，推动剧情与打脸，潜台词少。
-【钩子与爽点】每章至少一个爽点（打脸/升级/反转），章末必留钩子。",
-            ),
-            (
-                "古龙风",
-                "【整体基调】冷峻写意，江湖气与孤独感。
-【句式与节奏】极短句，频繁分行，留白多，节奏如刀。
-【用词偏好】白描为主，名词短句堆叠，不堆砌形容词。
-【叙事视角】第三人称远视角，少心理描写，靠动作与对话写人。
-【对话风格】对话带机锋，简短有哲理，潜台词重。
-【钩子与爽点】悬念与反转取胜，章末常停在一句话的惊雷上。",
-            ),
-            (
-                "知乎盐选风",
-                "【整体基调】第一人称强悬念，真实感与反差感。
-【句式与节奏】口语化叙述，段落短，节奏快，信息密度高。
-【用词偏好】生活化词汇，网感表达，适度自嘲。
-【叙事视角】第一人称「我」，贴脸视角，强代入。
-【对话风格】对话自然日常，承担反转信息的释放。
-【钩子与爽点】开头即钩子，章章有小反转，结尾留大反转。",
-            ),
-            (
-                "晋江言情风",
-                "【整体基调】细腻情感流，氛围感与暧昧张力。
-【句式与节奏】长短句错落，感官细节多，节奏舒缓。
-【用词偏好】精致书面语，意象化表达，情绪词克制。
-【叙事视角】第三人称限知（多贴女主），心理描写细腻。
-【对话风格】对话含蓄，言外之意与互相试探多。
-【钩子与爽点】情感进展即爽点，章末停在关系变化的一瞬。",
-            ),
-        ];
         let ts = now();
-        for (name, guide) in BUILTIN {
+        for (name, guide) in Self::BUILTIN_STYLES {
             conn.execute(
                 "INSERT INTO styles (name, source, sample_chars, guide, example, kind, created_at, updated_at)
                  VALUES (?1, '内置', 0, ?2, '', 'text', ?3, ?3)",
@@ -2008,4 +2022,70 @@ pub fn html_to_text(s: &str) -> String {
         collapsed = collapsed.replace("\n\n\n", "\n\n");
     }
     collapsed.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v20 迁移：旧六节内置卡刷新为纯文笔五节版；用户卡与新格式卡不动。
+    /// 手工搭一个 user_version=19 的最小库（只有 styles 表），重开触发 v20 块
+    #[test]
+    fn migrates_v20_builtin_styles() {
+        let path = std::env::temp_dir().join(format!(
+            "novel-studio-test-v20-{}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE styles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT '',
+                    sample_chars INTEGER NOT NULL DEFAULT 0,
+                    guide TEXT NOT NULL DEFAULT '',
+                    example TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL DEFAULT 'text',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                PRAGMA user_version = 19;",
+            )
+            .unwrap();
+            for (name, source, guide) in [
+                ("古龙风", "内置", "【整体基调】旧六节卡"),
+                ("我的风格", "本地文本", "【整体基调】用户蒸馏卡"),
+                ("新内置", "内置", "【画面与细节】已是新五节卡"),
+            ] {
+                conn.execute(
+                    "INSERT INTO styles (name, source, guide, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, 1, 1)",
+                    params![name, source, guide],
+                )
+                .unwrap();
+            }
+        }
+
+        let db = Db::new(&path).unwrap(); // 重开 → 跑 v20 迁移
+        let get_guide = |name: &str| -> String {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT guide FROM styles WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let gulong = get_guide("古龙风");
+        assert!(gulong.contains("【画面与细节】"), "内置旧卡应刷新为新五节");
+        assert!(!gulong.contains("【整体基调】"));
+        assert_eq!(get_guide("我的风格"), "【整体基调】用户蒸馏卡");
+        assert_eq!(get_guide("新内置"), "【画面与细节】已是新五节卡");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
 }

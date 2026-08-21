@@ -1,7 +1,7 @@
 //! 写作风格库：本地文本样本 → LLM 蒸馏风格卡
 //!
-//! 样本由用户上传 txt 或粘贴文本（前端 FileReader 读入），仅用于本地风格分析，
-//! UI 已提示建议使用公版/免费授权作品。
+//! 样本由用户上传 txt（后端直接读文件，不经过前端展示——几百万字的书展示无意义）
+//! 或粘贴文本，仅用于本地风格分析，UI 已提示建议使用公版/免费授权作品。
 
 use crate::commands::{load_llm_config, ChatMsg};
 use crate::db::{Db, Style};
@@ -13,19 +13,16 @@ use tauri::State;
 /// 蒸馏时喂给 LLM 的样本上限（头 6000 + 中 3000 + 尾 3000）
 const DISTILL_INPUT_CHARS: usize = 12000;
 
-/// 蒸馏风格：样本分三段取样 → LLM 出结构化风格卡 → 入库
-#[tauri::command]
-pub async fn distill_style(
-    db: State<'_, Db>,
-    name: String,
-    source: String,
-    sample_text: String,
+/// 蒸馏核心：头/中/尾三段取样 → LLM 出风格卡 → 入库
+async fn distill_and_save(
+    db: &Db,
+    name: &str,
+    source: &str,
+    sample: &str,
 ) -> Result<Style, String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
+    if name.trim().is_empty() {
         return Err("请给风格起个名字".to_string());
     }
-    let sample = sample_text.trim().to_string();
     if sample.chars().count() < 500 {
         return Err("样本太短（至少 500 字），风格特征分析不出来".to_string());
     }
@@ -33,7 +30,7 @@ pub async fn distill_style(
     // 头/中/尾三段取样：风格贯穿全文，只看开头容易以偏概全
     let chars: Vec<char> = sample.chars().collect();
     let excerpt = if chars.len() <= DISTILL_INPUT_CHARS {
-        sample.clone()
+        sample.to_string()
     } else {
         let head_len = DISTILL_INPUT_CHARS / 2; // 头 6000
         let mid_len = DISTILL_INPUT_CHARS / 4; // 中 3000
@@ -47,21 +44,21 @@ pub async fn distill_style(
         format!("{head}\n……（节选）……\n{mid}\n……（节选）……\n{tail}")
     };
 
-    let cfg = load_llm_config(&db);
+    let cfg = load_llm_config(db);
     let guide = llm::chat_once(
         cfg,
         vec![
             (
                 "system".to_string(),
-                "你是文学风格分析师。阅读给定的小说样本，提炼出可执行的写作风格卡，\
-                供另一位作者模仿该风格创作。按以下六个小节输出，每节一两句，总共不超过 400 字：\n\
-                【整体基调】题材气质与情感基调\n\
+                "你是文学风格分析师。阅读给定的小说样本，只提炼文笔层面可模仿的特征——\
+                题材、基调、钩子与爽点由作者写书时按简介大纲自定，不属于风格卡，绝不写进卡。\
+                按以下五个小节输出，每节一两句，总共不超过 400 字：\n\
                 【句式与节奏】句长偏好、长短句搭配、叙事流速\n\
                 【用词偏好】词汇质感（华丽/白描/口语化）、标志性表达\n\
                 【叙事视角】人称、视角距离、心理描写占比\n\
                 【对话风格】对话占比、说话方式、潜台词习惯\n\
-                【钩子与爽点】章末钩子类型、情绪调动手法\n\
-                只输出风格卡本身，不要复述剧情、不要提及具体角色名和书名。"
+                【画面与细节】具象描写密度、五感细节、比喻习惯\n\
+                只输出风格卡本身，不要复述剧情、不要提及具体角色名和书名，忽略题材与情节内容。"
                     .to_string(),
             ),
             ("user".to_string(), format!("【小说样本】\n{excerpt}")),
@@ -77,7 +74,7 @@ pub async fn distill_style(
         .collect();
 
     db.create_style(
-        &name,
+        name.trim(),
         source.trim(),
         sample.chars().count() as i64,
         guide.trim(),
@@ -85,6 +82,35 @@ pub async fn distill_style(
         "text",
     )
     .map_err(|e| e.to_string())
+}
+
+/// 蒸馏风格：样本分三段取样 → LLM 出结构化风格卡 → 入库
+#[tauri::command]
+pub async fn distill_style(
+    db: State<'_, Db>,
+    name: String,
+    source: String,
+    sample_text: String,
+) -> Result<Style, String> {
+    let sample = sample_text.trim().to_string();
+    distill_and_save(&db, &name, &source, &sample).await
+}
+
+/// 上传 txt 蒸馏：后端直接读文件（几百万字的书不进前端），编码 UTF-8 → GB18030 回退
+#[tauri::command]
+pub async fn distill_style_from_file(
+    db: State<'_, Db>,
+    name: String,
+    path: String,
+) -> Result<Style, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取文件失败: {e}"))?;
+    let sample = crate::book_import::decode_text(&bytes).trim().to_string();
+    let file_name = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("本地文件");
+    let source = format!("本地文件：{file_name}");
+    distill_and_save(&db, &name, &source, &sample).await
 }
 
 #[tauri::command]
@@ -143,9 +169,10 @@ const STYLE_CHAT_BASE: &str = "你在和用户通过多轮对话共创一张风�
 未出卡时正常对话，绝不输出标记。\n\
 【卡的规格】\n";
 
-/// 写作风格卡规格（沿用蒸馏卡的六节结构，注入续写/批量/划词通用）
-const STYLE_CHAT_SPEC_TEXT: &str = "按六个小节输出，每节一两句，总共不超过 400 字：\n\
-【整体基调】【句式与节奏】【用词偏好】【叙事视角】【对话风格】【钩子与爽点】\n\
+/// 写作风格卡规格（沿用蒸馏卡的五节结构——纯文笔特征；题材/基调/钩子由作者写书时自定）
+const STYLE_CHAT_SPEC_TEXT: &str = "按五个小节输出，每节一两句，总共不超过 400 字：\n\
+【句式与节奏】【用词偏好】【叙事视角】【对话风格】【画面与细节】\n\
+只描述文笔层面可模仿的特征，题材、基调、钩子与爽点不写进卡。\n\
 描述里提到具体作家/作品时，凭你的知识概括其公开可见的风格特征，绝不复述或模仿原文句子。";
 
 /// 图片画风卡规格（锚点词约束同一次性出卡时代的图片卡规格）

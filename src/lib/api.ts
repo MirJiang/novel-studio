@@ -485,6 +485,19 @@ export const api = {
   distillStyle: (name: string, source: string, sampleText: string) =>
     invoke<Style>("distill_style", { name, source, sampleText }),
 
+  /** 选择 txt 样本文件（蒸馏用，后端直读不进前端），取消返回 null */
+  pickBookText: async () => {
+    const r = await open({
+      multiple: false,
+      filters: [{ name: "文本文件", extensions: ["txt"] }],
+    });
+    return typeof r === "string" ? r : null;
+  },
+
+  /** 上传 txt 蒸馏：后端读文件（UTF-8/GBK 自适应）→ 头中尾三段取样蒸馏入库 */
+  distillStyleFromFile: (name: string, path: string) =>
+    invoke<Style>("distill_style_from_file", { name, path }),
+
   listStyles: () => invoke<Style[]>("list_styles"),
 
   deleteStyle: (id: number) => invoke<void>("delete_style", { id }),

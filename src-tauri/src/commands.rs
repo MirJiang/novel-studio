@@ -1556,23 +1556,44 @@ pub fn summary_stats(db: State<'_, Db>, project_id: i64) -> Result<(i64, i64), S
     db.summary_stats(project_id).map_err(|e| e.to_string())
 }
 
-// ---------- 体检 ----------
+// ---------- 全书评分（真人书评视角） ----------
 
-const CHECK_SYSTEM_PROMPT: &str = "你是一位资深的网络小说主编，负责成稿体检。\
-仔细核对提供的设定资料与各章摘要，找出以下五类问题：\n\
-1. 设定冲突：正文与设定资料矛盾（人物年龄/能力/关系/外貌前后不一致等）\n\
-2. 时间线矛盾：事件先后顺序、时间跨度不合理\n\
-3. 伏笔问题：疑似埋设但未回收的伏笔，或回收得过于仓促\n\
-4. 逻辑漏洞：情节推进不合理之处\n\
-5. 节奏与水章：只过桥不落事的过渡章、连续多章局面无变化、大段背景直灌、\
-章末停在总结/解释而非变化上、追更点断档\n\n\
-输出要求：Markdown 分节输出（## 设定冲突 / ## 时间线 / ## 伏笔台账 / ## 逻辑漏洞 / ## 节奏与水章 / ## 总体评价）。\
-每个问题给出：问题描述、涉及章节、严重程度（高/中/低）、修改建议。\
-伏笔台账用列表逐条列出：伏笔内容、埋设章节、状态（已回收/未回收/疑似未回收）。\
-某类没有发现问题就明确写「未发现」。不要编造摘要中不存在的情节。";
+const CHECK_SYSTEM_PROMPT: &str = "你是一位阅文无数、口味挑剔的资深网文读者兼书评人，现在为一部长篇连载写总评。\
+助手已把全书正文逐段通读完毕并做了笔记（见【全书评注】，覆盖每一章），你的评价以评注为事实底座。\
+评价必须站在真人读者的角度：诚实、直接、有立场，不写客套话——真的好才夸，平庸就直说平庸，差就点出差在哪。\
+评分要有区分度，不打保险分：9 分以上只给头部水准，7~8.9 好看可追，5~6.9 平庸能看，5 以下有明显硬伤。\
+所有判断必须有据：引用评注中的具体章节、情节或原句，禁止「节奏紧凑引人入胜」这类放之四海皆准的套话。\
+不要编造材料中不存在的情节；某段评注失败或材料明显不足时在对应小节明说，并降低评分置信度。\n\
+输出 Markdown，严格按以下结构分节（## 标题一字不差）：\n\
+## 总分\nX.X/10 —— 一句定调短评\n\
+## 维度评分\n- 文笔：X.X/10 —— 一句依据\n- 节奏：X.X/10 —— 一句依据\n- 人物塑造：X.X/10 —— 一句依据\n- 情节逻辑：X.X/10 —— 一句依据\n- 吸引力：X.X/10 —— 一句依据（爽点/钩子/追读欲）\n\
+## 优点\n逐条列，每条带章节或情节依据\n\
+## 缺点\n逐条列，每条带章节或情节依据；可以毒舌，但对文不对人\n\
+## 文笔评价\n以【全书评注】摘引的原句为据，评价语感/句式/用词/画面感/对话自然度，摘出典型亮点句或病句\n\
+## 风格与主题贴合度\n对照【作品信息】【写作风格要求】【大纲】：题材卖点是否兑现、风格是否走样、主线是否偏离大纲，偏在哪里\n\
+## 总评\n一段话收拢：这本书在追更市场上的位置、目标读者、最该先改的一件事";
+
+/// 通读员（分批评注）prompt：全书正文逐段过一遍，笔记供总评引用
+const ANNOTATE_SYSTEM_PROMPT: &str = "你是一位资深网文读者，正在通读一部长篇连载并做读书笔记，供稍后写总评引用。\
+对给出的正文片段做评注（≤350 字），严格按四栏输出：\n\
+【精彩】文笔佳句/精彩片段/爽点：摘原句并说清好在哪；没有就写「无」\n\
+【问题】文笔毛病/逻辑漏洞/节奏拖沓/设定矛盾：引原句或情节；没有就写「无」\n\
+【贴合】正文与题材定位/写作风格要求的贴合观察（如走样、笔力不均）；没有可写的写「无」\n\
+【印象】本段一句话印象 + 阶段印象分 X.X/10\n\
+所有评价落到具体句子或情节，禁止「节奏紧凑引人入胜」这类套话；宁缺毋滥，不硬凑。";
 
 const CHECK_LORE_BUDGET: usize = 4000;
 const CHECK_SUMMARY_BUDGET: usize = 8000;
+/// 大纲注入预算（评偏离主线用）
+const CHECK_OUTLINE_BUDGET: usize = 1500;
+/// 全书通读：每批正文目标字数（按章边界累积）
+const CHECK_BATCH_CHARS: usize = 7000;
+/// 通读并发路数（聊天补全接口，4 路礼貌且够快）
+const CHECK_CONCURRENCY: usize = 4;
+/// 注入总评的评注总预算（超出按段等距保留，头中尾都要有依据，不做尾部截断）
+const ANNOTATION_BUDGET: usize = 24000;
+/// 给通读员的风格卡上限（评注「贴合」栏的基准）
+const ANNOTATE_STYLE_CHARS: usize = 300;
 
 #[tauri::command]
 pub async fn check_consistency(
@@ -1580,10 +1601,45 @@ pub async fn check_consistency(
     project_id: i64,
     channel: Channel<StreamEvent>,
 ) -> Result<(), String> {
+    use futures_util::StreamExt as _;
+
     let cfg = load_llm_config(&db);
     let (total, with_summary) = db.summary_stats(project_id).map_err(|e| e.to_string())?;
-    if with_summary == 0 {
-        return Err("还没有任何章节摘要，请先「补齐摘要」再体检".to_string());
+
+    let project = db
+        .list_projects()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or("作品不存在")?;
+
+    // 写作风格要求（作者绑定风格卡才有；通读「贴合」栏与总评「是否偏离风格」的基准）
+    let style_block = if project.style_id > 0 {
+        db.get_style(project.style_id)
+            .ok()
+            .flatten()
+            .filter(|s| !s.guide.trim().is_empty())
+            .map(|s| (s.name, s.guide.trim().to_string()))
+    } else {
+        None
+    };
+
+    // 大纲（评价主线偏离的基准，预算内逐节点）
+    let outline = db.list_outline(project_id).map_err(|e| e.to_string())?;
+    let mut outline_section = String::new();
+    for (i, item) in outline.iter().enumerate() {
+        let line = format!(
+            "{}. {}（{}）：{}\n",
+            i + 1,
+            item.title,
+            if item.status == "done" { "已完成" } else { "进行中" },
+            item.content.trim()
+        );
+        if outline_section.len() + line.len() > CHECK_OUTLINE_BUDGET {
+            outline_section.push_str("……（后续节点略）\n");
+            break;
+        }
+        outline_section.push_str(&line);
     }
 
     // 设定资料（全量启用词条，预算内）
@@ -1599,7 +1655,7 @@ pub async fn check_consistency(
         lore_section.push_str(&block);
     }
 
-    // 全部章节摘要（order_index 上限取最大，即不过滤）
+    // 全部章节摘要（可选增强：全书通读后不再必需，但有则更准）
     let summaries = db
         .list_summaries_before(project_id, i64::MAX)
         .map_err(|e| e.to_string())?;
@@ -1613,18 +1669,150 @@ pub async fn check_consistency(
         summary_section.push_str(&line);
     }
 
+    // ---------- 阶段一：全书正文分批通读 ----------
+
+    // 逐章取正文，按章边界累积分批（每批约 7000 字，单章超长自为一批）
+    let metas = db.list_chapters(project_id).map_err(|e| e.to_string())?;
+    let mut chapters_text: Vec<(String, String)> = Vec::new();
+    for m in &metas {
+        let Ok(ch) = db.get_chapter(m.id) else { continue };
+        let text = db::html_to_text(&ch.content).trim().to_string();
+        if text.chars().count() >= 50 {
+            chapters_text.push((ch.title, text));
+        }
+    }
+    if chapters_text.is_empty() {
+        return Err("章节正文为空（或几乎为空），没法评分".to_string());
+    }
+    let mut batches: Vec<Vec<(String, String)>> = Vec::new();
+    let mut cur: Vec<(String, String)> = Vec::new();
+    let mut cur_chars = 0usize;
+    for (title, text) in chapters_text {
+        let c = text.chars().count();
+        if cur_chars + c > CHECK_BATCH_CHARS && !cur.is_empty() {
+            batches.push(std::mem::take(&mut cur));
+            cur_chars = 0;
+        }
+        cur_chars += c;
+        cur.push((title, text));
+    }
+    if !cur.is_empty() {
+        batches.push(cur);
+    }
+
+    let total_batches = batches.len();
+    let book_info_line = format!(
+        "《{}》{}",
+        project.name,
+        if project.description.trim().is_empty() {
+            String::new()
+        } else {
+            format!("（{}）", project.description.trim())
+        }
+    );
+    let style_for_annotator = style_block
+        .as_ref()
+        .map(|(n, g)| format!("「{n}」：{}", head_chars(g, ANNOTATE_STYLE_CHARS)))
+        .unwrap_or_else(|| "（未绑定，按题材常规期待）".to_string());
+
+    let _ = channel.send(StreamEvent::Meta {
+        note: format!("开始通读全书：{} 章正文分 {} 段…", metas.len(), total_batches),
+    });
+
+    let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut annotations: Vec<(usize, String)> = futures_util::stream::iter(
+        batches
+            .into_iter()
+            .enumerate()
+            .map(|(bi, batch)| {
+                let cfg = cfg.clone();
+                let channel = channel.clone();
+                let done = done_count.clone();
+                let book_info = book_info_line.clone();
+                let style = style_for_annotator.clone();
+                async move {
+                    let mut prose = String::new();
+                    for (t, txt) in &batch {
+                        prose.push_str(&format!("《{t}》\n{txt}\n\n"));
+                    }
+                    let user = format!(
+                        "【作品】{book_info}\n【写作风格要求】{style}\n\
+                         【本段为全书第 {}/{} 段】\n【正文】\n{}",
+                        bi + 1,
+                        total_batches,
+                        prose
+                    );
+                    let result = llm::chat_once(
+                        cfg,
+                        vec![
+                            ("system".to_string(), ANNOTATE_SYSTEM_PROMPT.to_string()),
+                            ("user".to_string(), user),
+                        ],
+                    )
+                    .await;
+                    let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let _ = channel.send(StreamEvent::Meta {
+                        note: format!("通读全书 {n}/{total_batches} 段…"),
+                    });
+                    let text = match result {
+                        Ok(a) => a.trim().to_string(),
+                        Err(e) => format!("（本段评注失败：{e}）"),
+                    };
+                    (bi, format!("—— 第 {} 段 ——\n{text}", bi + 1))
+                }
+            }),
+    )
+    .buffer_unordered(CHECK_CONCURRENCY)
+    .collect()
+    .await;
+    annotations.sort_by_key(|(bi, _)| *bi);
+    let annotations: Vec<String> = annotations.into_iter().map(|(_, a)| a).collect();
+
+    // 评注超预算：按段等距保留（头中尾都要有依据，不截尾部）
+    let total_ann: usize = annotations.iter().map(|a| a.len()).sum();
+    let (annotation_section, injected) = if total_ann <= ANNOTATION_BUDGET {
+        (annotations.join("\n\n"), annotations.len())
+    } else {
+        let keep = (ANNOTATION_BUDGET / 400).max(1).min(annotations.len());
+        let step = annotations.len() as f64 / keep as f64;
+        let mut picked: Vec<&str> = Vec::new();
+        let mut i = 0f64;
+        while (i as usize) < annotations.len() {
+            picked.push(&annotations[i as usize]);
+            i += step;
+        }
+        (
+            format!(
+                "（全书共 {} 段评注，因长度等距保留 {} 段，覆盖头中尾）\n{}",
+                annotations.len(),
+                picked.len(),
+                picked.join("\n\n")
+            ),
+            picked.len(),
+        )
+    };
+
+    // ---------- 阶段二：汇总流式评分 ----------
+
     let _ = channel.send(StreamEvent::Meta {
         note: format!(
-            "体检范围：设定 {} 条｜摘要 {}/{} 章",
-            entries.iter().filter(|e| e.enabled).count(),
+            "评分素材：全书 {} 章分 {} 段通读评注（注入 {} 段）｜摘要 {}/{} 章｜风格：{}｜大纲 {} 节点",
+            metas.len(),
+            total_batches,
+            injected,
             with_summary,
-            total
+            total,
+            style_block
+                .as_ref()
+                .map(|(n, _)| n.as_str())
+                .unwrap_or("未绑定"),
+            outline.len()
         ),
     });
 
     let missing_note = if with_summary < total {
         format!(
-            "\n\n注意：共 {total} 章，其中 {} 章缺少摘要，未纳入本次检查。",
+            "\n\n注意：共 {total} 章，其中 {} 章缺少摘要；摘要只是辅助，全书正文已逐段通读。",
             total - with_summary
         )
     } else {
@@ -1632,14 +1820,44 @@ pub async fn check_consistency(
     };
 
     let user = format!(
-        "【设定资料】\n{}\n【各章摘要】\n{}{}",
+        "【作品信息】\n书名《{}》\n题材标签：{}\n简介：{}\n\n\
+         【写作风格要求】\n{}\n\n\
+         【大纲】\n{}\n\
+         【设定资料】\n{}\n\
+         【各章摘要】\n{}{}\n\
+         【全书评注】（通读员逐段笔记，覆盖全书正文；文笔与精彩度以其中摘引的原句为据）\n{}",
+        project.name,
+        if project.description.trim().is_empty() {
+            "（未设置）"
+        } else {
+            project.description.trim()
+        },
+        if project.synopsis.trim().is_empty() {
+            "（未写简介，按正文实际呈现评价）"
+        } else {
+            project.synopsis.trim()
+        },
+        match &style_block {
+            Some((name, guide)) => format!("作者绑定风格「{name}」，正文应贴合：\n{guide}"),
+            None => "（作者未绑定写作风格，按题材常规期待评价）".to_string(),
+        },
+        if outline_section.is_empty() {
+            "（未设置大纲，只评题材与风格贴合）\n"
+        } else {
+            &outline_section
+        },
         if lore_section.trim().is_empty() {
             "（未提供设定资料）\n"
         } else {
             &lore_section
         },
-        summary_section,
-        missing_note
+        if summary_section.is_empty() {
+            "（尚无章节摘要，情节脉络以全书评注为据）\n"
+        } else {
+            &summary_section
+        },
+        missing_note,
+        annotation_section,
     );
 
     llm::stream_chat(

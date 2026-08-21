@@ -89,7 +89,7 @@ fn import(db: &Db, path: &Path) -> Result<ImportBookResult> {
 // ---------- txt / md ----------
 
 /// 字节 → 文本：优先严格 UTF-8，失败回退 GB18030（GBK 超集，兼容老书站 txt）
-fn decode_text(bytes: &[u8]) -> String {
+pub(crate) fn decode_text(bytes: &[u8]) -> String {
     match String::from_utf8(bytes.to_vec()) {
         Ok(s) => s,
         Err(_) => encoding_rs::GB18030.decode(bytes).0.into_owned(),

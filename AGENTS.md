@@ -5,7 +5,7 @@
 
 ## 一句话
 
-AI 小说创作工作室（Windows 桌面端）：写作 → 设定库 → 封面 → 全书体检 →（规划：推文视频 → 多平台分发）。
+AI 小说创作工作室（Windows 桌面端）：写作 → 设定库 → 封面 → 全书评分 →（规划：推文视频 → 多平台分发）。
 
 ## 协作模式（重要）
 
@@ -31,7 +31,7 @@ src/
   lib/api.ts                  ★ 全部后端调用的唯一入口（架构红线，见下）
   components/
     Caption.tsx               无边框窗口标题栏：品牌 + 面包屑 + 拖拽区 + 最小化/最大化/关闭
-    AppRail.tsx               应用级导航栏（贯穿书架/写作态）：书架/写作/体检 + 风格库 + 视频/发布/任务 + 导出/设置（封面已并入书籍详情与写作侧栏）
+    AppRail.tsx               应用级导航栏（贯穿书架/写作态）：书架/写作/评分 + 风格库 + 视频/发布/任务 + 导出/设置（封面已并入书籍详情与写作侧栏）
     Bookshelf.tsx             书架首页：封面卡片网格（取最新封面，无封面用渐变首字块）+ 新建作品；
                               卡片底部常驻「写作 / 详情」双按钮（防呆，不靠 ⋯ 藏入口）
     BookDetailView.tsx        书籍详情覆盖层：概览（简介 AI 生成/手改）· 大纲（分卷进度 + AI 生成）· 设定（分类浏览 + 逐条生成设定图）· 封面工坊
@@ -42,7 +42,7 @@ src/
                               SynopsisSection / OutlineSection 拆为共用组件，书籍详情页概览/大纲页签复用
     LoreEditor.tsx            设定词条编辑器（分类/关键词/常驻注入/参考图/自动保存）
     CoverView.tsx             封面工坊：描述词表单（可留空，AI 按简介/设定/正文自动总结）+ 预览 + 历史缩略图
-    CheckView.tsx             全书体检：摘要覆盖度 + 批量补齐 + 流式报告 + 历史
+    CheckView.tsx             全书评分：摘要覆盖度 + 批量补齐 + 全书通读评分报告（总分徽章提取）+ 历史 + 合规扫描
     VideoView.tsx             视频工坊：口播稿/分镜表/单镜重绘/流水线执行/成片播放
     StylesView.tsx            风格库（整页全局）三页签：写作（对话生成/上传蒸馏）/ 图片画风 / 视频运镜（后两者内置预设一键添加，src/lib/stylePresets.ts）
     PublishView.tsx           发布页：章节→番茄后台填充；视频→抖音创作者中心填文案（均 fill-only，发布人工点）
@@ -52,9 +52,10 @@ src/
     SettingsView.tsx          设置页（整页非弹窗，左侧分类菜单）：文本模型/封面生图/配音 TTS + 平台账号占位
 src-tauri/src/
   lib.rs                      Tauri 入口：插件注册、DB 初始化、命令注册表
-  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v19）
-  commands.rs                 写作/设定/封面/体检等 #[tauri::command] + prompt 组装 + 注入逻辑
-  commands_style.rs           风格库命令：LLM 蒸馏风格卡 + CRUD（样本由用户本地上传）
+  db.rs                       SQLite 层：全部表 CRUD + 版本化迁移（当前 v20）
+  commands.rs                 写作/设定/封面/评分等 #[tauri::command] + prompt 组装 + 注入逻辑
+  commands_style.rs           风格库命令：LLM 蒸馏风格卡 + CRUD（上传 txt 走后端直读——
+                              distill_style_from_file，全文不进前端；GB18030 编码回退复用 book_import）
   commands_publish.rs         发布：番茄/抖音第二窗口 + eval 注入填充（location.hash 回读结果）
   book_import.rs              本地书籍导入：txt/md（严格 UTF-8 → 失败回退 GB18030，老书站 txt 多为 GBK）、
                               epub（解 zip → container.xml → OPF 书脊逐篇剥标签）、docx（document.xml 剥标签）；
@@ -84,9 +85,11 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 1. **前端只通过 `src/lib/api.ts` 调后端**，组件里禁止直接 import @tauri-apps/api
    （未来网页版只换这一个文件）
 2. **任何 AI 输出都要过设定注入**（续写/改写/润色/扩写共用 `build_lore_section`）
-3. **prompt 预算硬顶**：设定 2000 字 / 摘要 1500 字 / 前文尾部 3000 字 / 体检摘要 8000 字 / 大纲 600 字——成本可预测
+3. **prompt 预算硬顶**：设定 2000 字 / 摘要 1500 字 / 前文尾部 3000 字 / 大纲 600 字——成本可预测；
+   **例外是全书评分**：产品要求不为省 token 漏内容，正文按 ~7000 字/批 ×4 并发逐段通读做评注（批数=全书字数，
+   无上限），汇总阶段注入评注预算 24000 字（超出等距保留，头中尾都有据）+ 摘要 8000 字
 4. 注入明细通过 meta 事件对用户可见（崩了能分清"没写设定"还是"没注入"）
-5. 数据库改动走 `user_version` 版本化迁移（当前 v19），禁止直接改老表的 CREATE 语句了事
+5. 数据库改动走 `user_version` 版本化迁移（当前 v20），禁止直接改老表的 CREATE 语句了事
 6. 模型接入协议只有两套：OpenAI 兼容 + Anthropic（D27），禁止为单个厂商接私有 SDK/协议；
    唯一例外是阿里云生图（wan2.x-image 无 OpenAI 协议入口，image_gen.rs 按域名自动适配）
 
@@ -114,9 +117,9 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 - 设置：`get_setting` `set_setting`
 - 导出：`export_project(project_id, path)` → txt
 - 封面：`generate_cover(project_id, prompt, title, author)` → { path, data_url }；`list_covers`（预览走 asset 协议 fileUrl）
-- 体检：`summary_stats` `generate_missing_summaries`（进度事件）`check_consistency`（流式）`save_check_report` `list_check_reports` `get_check_report`
+- 评分：`summary_stats` `generate_missing_summaries`（进度事件）`check_consistency`（流式，真人书评）`save_check_report` `list_check_reports` `get_check_report`
 - 任务队列：`enqueue_batch_chapters` `enqueue_video_shots` `enqueue_rewrite_chapters` `list_tasks` `cancel_task` `resume_task`（断点继续）`retry_task` `clear_finished_tasks`（前端 2s 轮询 tasks 表驱动浮条/toast/章节实时刷新；批量写章参数 count<=0 按全书目标字数推算，逐章落库+自动摘要+收尾推进大纲）
-- 风格库：`distill_style(name, source, sample_text)` `list_styles` `delete_style` `set_project_style(project_id, style_id)`
+- 风格库：`distill_style(name, source, sample_text)` `distill_style_from_file(name, path)`（上传 txt 蒸馏，后端直读不进前端） `list_styles` `delete_style` `set_project_style(project_id, style_id)`
 - 发布：`open_fanqie_window` `fill_chapter_draft(chapter_id)`（番茄章节，只填不发布）
   `open_douyin_window` `fill_douyin_caption(video_id)`（抖音上传页填标题+话题；视频文件人工拖入——文件框 JS 设不了）
 - 助手：`assistant_chat(project_id, chapter_id?, messages, channel)`（全书注入流式）
@@ -194,15 +197,22 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
   （原来 LLM 判多少标多少，10 章能冲完 4/6 节点）
 - 卷预估章数（v19）：AI 起书/大纲生成按剧情体量预估各卷章数（明示禁止平均分，参照全书字数目标），
   大纲页/起书向导可手改；注入升级为「已写 N/约 M 章」+ 分阶段节奏提示（<5 成铺陈/5~8 成中段/≥8 成收尾）；
-  收卷硬闸：实际章数不足预估六成时 advance_outline 拒绝标完成；大纲页与侧栏卷头显示 N/约M 章
+  收卷硬闸：实际章数不足预估六成时 advance_outline 拒绝标完成；大纲页与侧栏卷头显示 N/约M 章；
+  内置风格卡 v20 改版为纯文笔五节（题材/基调/钩子不进卡），已有库按「旧六节格式且名字未改」
+  刷新（用户卡不动，db.rs 有迁移测试）
 - 导出 txt：系统保存对话框，html_to_text 段落转换
 - 封面工坊：AI 底图 + 程序排版书名（1536×2048 3:4），历史管理
-- 全书体检：设定冲突/时间线/伏笔台账/逻辑漏洞，流式报告 + 存档
+- 全书评分（原体检改版）：真人读者视角总评——总分 X.X/10 + 维度分（文笔/节奏/人物/逻辑/吸引力）+
+  优缺点（带章节依据）+ 文笔专项 + 风格与主题贴合度（对照绑定的写作风格卡/简介/大纲，评偏离）；
+  prompt 强调毒舌诚实不打保险分；**两阶段管线**：全书正文按 ~7000 字/批 ×4 并发逐段通读做评注笔记
+  （精彩/问题/贴合/印象分四栏，批失败留占位不中断，meta 事件报进度）→ 汇总流式出报告
+  （评注注入预算 24000，超出等距保留）；摘要从必需降为可选增强；存档复用 check_reports，
+  前端从「## 总分」节提取分数显示徽章（旧体检报告提取不到则不显示）
 - 界面：无边框窗口（自制 Caption 标题栏）+ 雾白毛玻璃设计系统（index.css @theme，见 D14）
-- 导航：AppRail 全局导航栏（书架/体检/风格/视频/发布/任务/导出/设置；无「写作」项——书架点书即进写作，
-  恢复阅读位置）；体检/视频/发布随时可点：有书上下文直接切，没有则带最近打开的书
+- 导航：AppRail 全局导航栏（书架/评分/风格/视频/发布/任务/导出/设置；无「写作」项——书架点书即进写作，
+  恢复阅读位置）；评分/视频/发布随时可点：有书上下文直接切，没有则带最近打开的书
   （settings last_project，重启有效）直达，连最近书都没有就弹选书面板挑一本；三个工坊页顶部有「当前作品」切换条，换书不离开当前工坊；封面已并入书籍详情/写作侧栏
-- 「写作」导航项记忆最近章节，从封面/体检一键返回工作区
+- 「写作」导航项记忆最近章节，从封面/评分一键返回工作区
 - 推文视频 v0.4 第一刀：口播稿（流式+设定注入）→ 分镜 JSON → 逐镜生图（可单镜重绘）
   → 火山 TTS 配音 → ffmpeg 合成（静图 zoompan 或 Seedance 镜头视频 + ASS 字幕 + BGM 混音 + 片头片尾拼接），
   视频工坊视图 + 成片播放
@@ -246,10 +256,11 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
   「改写本章」流式出预览，点「替换原文并更新摘要」才落库（带前后章摘要保连贯，>8000 字引导划词分段）；
   「跨章改写」LLM 按摘要链定位受影响章节 → 勾选确认 → 队列逐章改写（每章先快照 chapter_backups v12，
   任务面板可整批回滚；改写后自动重生成摘要）
-- 合规扫描：体检页填敏感词 → 纯文本检索命中清单（章节/词/上下文）→ 一键入队整改（复用跨章改写）
+- 合规扫描：评分页填敏感词 → 纯文本检索命中清单（章节/词/上下文）→ 一键入队整改（复用跨章改写）
 - 写作风格库：AppRail「风格」页，两条路——对话生成（描述风格如"古龙风"→ 出卡 → 追问微调 → 保存）；
   本地 txt/粘贴文本取样本 → LLM 蒸馏风格卡
-  （基调/句式/用词/视角/对话/钩子，≤400 字）→ 创建作品时选用；
+  （句式/用词/视角/对话/画面五节，≤400 字，纯文笔特征——题材/基调/钩子由作者写书时按简介大纲自定，
+  不进风格卡；上传 txt 走后端直读不进前端，粘贴文本照旧）→ 创建作品时选用；
   注入 AI 续写/批量写章/划词三件套的 system prompt（预算 800 字，meta 明细可见"风格：XXX"）
 - 发布到番茄：AppRail「发布」页 → open_fanqie_window 开番茄后台窗口（fanqienovel.com/main/writer/，扫码登录持久化免登）
   → fill_chapter_draft 把章节填进当前编辑页（fill-only，发布按钮人工点；选择器集中在 commands_publish.rs 顶部）
@@ -258,7 +269,7 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
 
 - 全书级内容整改（防审核风险）：跨章敏感内容检测 → 批量定位 → 按指令批量改写
   （如"把涉及 xx 的描写全部替换掉"），严重时支持流程级改写（调大纲 → 受影响章节标记重写）；
-  体检已有摘要链 + 报告基础，可在此基础上长
+  评分页已有摘要链 + 报告基础，可在此基础上长
 - 视频平台分发官方 API（抖音 content/create 需开发者资质；TikTok/YouTube 另说）
 - 红果短剧：无个人 UGC 上传通道（机构版权方供给制），不做——见 D23
 

@@ -93,6 +93,7 @@ pub fn run() {
             commands::assistant_chat,
             commands::assistant_rewrite_chapter,
             commands_style::distill_style,
+            commands_style::distill_style_from_file,
             commands_style::list_styles,
             commands_style::delete_style,
             commands_style::set_project_style,
