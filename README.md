@@ -11,7 +11,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-首次启动后：右上角「⚙ 模型设置」填入 LLM 配置
+首次启动后：左侧导航「设置」页填入 LLM 配置
 （开发期推荐 DeepSeek：接口 `https://api.deepseek.com/v1`，模型 `deepseek-chat`），
 然后新建作品 → 新建章节 → 点「AI 续写」。
 
@@ -41,8 +41,8 @@ scripts/        工具脚本（图标生成等）
 
 ## 正式图标
 
-当前图标是占位纯色图。替换方式：准备 1024×1024 PNG 覆盖根目录
-`app-icon.png`，然后执行 `pnpm tauri icon`。
+应用图标由 `scripts/gen-app-icon.py`（PIL 程序化绘制）生成。修改方式：改脚本运行得到
+新的 `app-icon.png`，然后执行 `pnpm tauri icon app-icon.png` 重新生成全套并重新编译。
 
 ## ffmpeg 依赖（视频合成）
 
@@ -50,3 +50,14 @@ scripts/        工具脚本（图标生成等）
 从 gyan.dev 下载 release-essentials 构建，或经 npmmirror：
 `pnpm add ffmpeg-static ffprobe-static`（配 `FFMPEG_BINARIES_URL=https://cdn.npmmirror.com/binaries/ffmpeg-static`）
 后从 node_modules 复制两个 exe 到 `src-tauri/binaries/` 与 `src-tauri/target/debug/binaries/`。
+
+> 许可证提示：gyan.dev 的 ffmpeg 构建基于 GPL 组件。本仓库不分发二进制；
+> 自行打包分发安装包时，需随包附带 ffmpeg 的许可证文本与源码获取方式（gyan.dev / ffmpeg.org 均有提供）。
+
+## 免责声明
+
+- **番茄搜书**：该功能通过番茄小说官方接口检索与采样，**仅限个人学习与写作风格分析**。
+  抓取内容的版权归原平台与作者所有——请勿传播、转载或商用。若你是权利方并认为本功能不妥，
+  请提 issue 或联系仓库作者，我会及时处理。
+- **AI 生成内容**：续写/大纲/封面/视频等均由所配置的第三方大模型生成，准确性由使用者自行核验；
+  API Key 等凭据仅保存在本机 SQLite，不上传任何服务器，但注意其为本机明文存储，请勿在不可信设备上使用。
