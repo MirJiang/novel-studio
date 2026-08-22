@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { Chapter, ChapterMeta, ChatMsg, ChatSession, CheckReportMeta, FqBook, FqSample, LoreChange, LoreEntry, OutlineItem, Project, ScanHit, ScopeItem, Style, Task, Video, VideoDetail } from "../types";
+import type { Chapter, ChapterMeta, ChatMsg, ChatSession, CheckFixPlan, CheckReportMeta, DialogueStats, FqBook, FqDistillResult, LoreChange, LoreEntry, LoreRelation, OutlineItem, Project, ScanResult, ScopeItem, Style, Task, Video, VideoDetail } from "../types";
 
 /** 无边框窗口的自制标题栏控制 */
 const appWindow = getCurrentWindow();
@@ -156,12 +156,16 @@ export const api = {
   /** 在线搜索番茄小说（公开中继 API） */
   fqSearch: (query: string) => invoke<FqBook[]>("fq_search", { query }),
 
-  /** 抓蒸馏样本：从第 1 章顺序抓到目标字数（默认 15000，2000~300000） */
-  fqDistillSample: (bookId: string, maxChars?: number) =>
-    invoke<FqSample>("fq_distill_sample", {
-      bookId,
-      maxChars: maxChars ?? null,
-    }),
+  /** 在线蒸馏：抓样本 → 后端直接蒸馏入库（maxChars 空=全本，抓取进度走事件） */
+  fqDistill: (
+    bookId: string,
+    maxChars: number | null,
+    onEvent: (event: ProgressEvent) => void
+  ) => {
+    const channel = new Channel<ProgressEvent>();
+    channel.onmessage = onEvent;
+    return invoke<FqDistillResult>("fq_distill", { bookId, maxChars, channel });
+  },
 
   /** 下载全本为 txt（进度事件；失败章节留占位行不中断），返回结果说明 */
   fqDownload: (
@@ -215,6 +219,20 @@ export const api = {
   /** AI 从全书摘要链搜集人物/地点/物品等设定词条入库，返回结果说明 */
   collectLoreEntries: (projectId: number) =>
     invoke<string>("collect_lore_entries", { projectId }),
+
+  /** 穷尽式设定收集：逐章扫正文收集所有具体元素（含次要物品），进度事件 */
+  collectLoreExhaustive: (
+    projectId: number,
+    onEvent: (event: ProgressEvent) => void
+  ) => {
+    const channel = new Channel<ProgressEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("collect_lore_exhaustive", { projectId, channel });
+  },
+
+  /** 评分报告 → AI 整改方案（含受影响章节与改写指令），前端展示后一键入队 */
+  makeCheckFixPlan: (projectId: number, reportId: number) =>
+    invoke<CheckFixPlan>("make_check_fix_plan", { projectId, reportId }),
 
   /** 人物卡视觉参考图，返回存储路径 */
   setLoreRefImage: (entryId: number, srcPath: string) =>
@@ -327,9 +345,9 @@ export const api = {
 
   // ---------- 设定变更台账 ----------
 
-  /** 手动提取某章的设定变更（重复提取幂等），返回变更条数 */
+  /** 手动提取某章的设定变更/实体/关系（重复提取幂等），返回统计说明 */
   extractLoreChanges: (chapterId: number) =>
-    invoke<number>("extract_lore_changes", { chapterId }),
+    invoke<string>("extract_lore_changes", { chapterId }),
 
   /** 台账列表（entryId/entryTitle 给值时按条目过滤，条目时间线用） */
   listLoreChanges: (
@@ -343,11 +361,37 @@ export const api = {
       entryTitle,
     }),
 
+  /** 应用台账变更到设定库（活设定：LLM 重写词条为当前状态，重写前快照），返回结果说明 */
+  applyLoreChanges: (projectId: number) =>
+    invoke<string>("apply_lore_changes", { projectId }),
+
+  /** 回滚最近一次应用：恢复词条快照 + 变更回到待应用 */
+  rollbackLoreApply: (projectId: number) =>
+    invoke<string>("rollback_lore_apply", { projectId }),
+
+  /** 关系三元组列表（人物资产/反向查询用） */
+  listLoreRelations: (projectId: number) =>
+    invoke<LoreRelation[]>("list_lore_relations", { projectId }),
+
+  /** 分章对话占比（本地统计，无 LLM 调用） */
+  dialogueStats: (projectId: number) =>
+    invoke<DialogueStats>("dialogue_stats", { projectId }),
+
+  /** 压缩远期摘要（分层记忆：每 50 章一段梗概，进度事件），返回结果说明 */
+  compressEraSummaries: (
+    projectId: number,
+    onEvent: (event: ProgressEvent) => void
+  ) => {
+    const channel = new Channel<ProgressEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("compress_era_summaries", { projectId, channel });
+  },
+
   /** 导出整部作品为 txt，返回写入路径 */
   exportProject: (projectId: number, path: string) =>
     invoke<string>("export_project", { projectId, path }),
 
-  /** 划词处理：mode = rewrite | polish | expand */
+  /** 划词处理：mode = rewrite | polish | expand | deslop（去AI味） */
   aiTransform: (
     chapterId: number,
     mode: string,
@@ -601,7 +645,7 @@ export const api = {
 
   /** 敏感词合规扫描（纯文本检索） */
   scanBannedWords: (projectId: number, words: string[]) =>
-    invoke<ScanHit[]>("scan_banned_words", { projectId, words }),
+    invoke<ScanResult>("scan_banned_words", { projectId, words }),
   // ---------- 会话归档（起书向导 bootstrap / 风格对话 style 共用） ----------
 
   /** 保存会话（id=null 新建），返回会话 id；scene 默认 bootstrap */

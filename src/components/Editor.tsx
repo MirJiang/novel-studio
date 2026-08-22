@@ -3,6 +3,12 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor as TiptapEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { api, type StreamEvent } from "../lib/api";
+import {
+  FONT_OPTIONS,
+  FONT_STACKS,
+  setEditorFont,
+  setEditorFontSize,
+} from "../lib/uiPrefs";
 import type { Chapter, OutlineItem } from "../types";
 
 interface EditorProps {
@@ -66,6 +72,21 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onSc
 
   // 摘要面板
   const [summaryOpen, setSummaryOpen] = useState(false);
+  // 正文字体/字号快捷调整（与「设置 → 常规」同一份键，双向同步）
+  const [fontOpen, setFontOpen] = useState(false);
+  const [font, setFont] = useState("serif");
+  const [fontSize, setFontSize] = useState(17);
+  useEffect(() => {
+    void api.getSetting("editor_font").then((v) => v && setFont(v));
+    void api.getSetting("editor_font_size").then(
+      (v) => v && setFontSize(parseInt(v, 10) || 17)
+    );
+  }, []);
+  const stepFontSize = (delta: number) => {
+    const next = Math.min(24, Math.max(14, fontSize + delta));
+    setFontSize(next);
+    void setEditorFontSize(next);
+  };
   const [summary, setSummary] = useState(chapter.summary);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const summaryRef = useRef(summary);
@@ -321,6 +342,72 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onSc
         >
           批量写章
         </button>
+        {/* 正文字体/字号快捷调整（与设置页同步） */}
+        <div className="relative shrink-0">
+          <button
+            onClick={() => setFontOpen((v) => !v)}
+            title="正文字体与字号（与设置页同步）"
+            className="rounded-full bg-card/70 px-4 py-2 text-[13px] text-body shadow-card transition-colors hover:bg-surface"
+          >
+            Aa
+          </button>
+          {fontOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setFontOpen(false)}
+              />
+              <div className="absolute right-0 top-full z-40 mt-2 w-60 rounded-2xl bg-surface p-4 shadow-float">
+                <p className="text-xs font-semibold text-ink">正文字体</p>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  {FONT_OPTIONS.map(([k, label]) => (
+                    <button
+                      key={k}
+                      onClick={() => {
+                        setFont(k);
+                        void setEditorFont(k);
+                      }}
+                      style={{ fontFamily: FONT_STACKS[k] }}
+                      className={`rounded-[10px] px-2 py-1.5 text-[13px] transition-colors ${
+                        font === k
+                          ? "bg-accent-soft font-semibold text-accent"
+                          : "bg-canvas text-body hover:bg-surface2"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-3.5 text-xs font-semibold text-ink">字号</p>
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    disabled={fontSize <= 14}
+                    onClick={() => stepFontSize(-1)}
+                    className="h-7 w-7 rounded-full bg-canvas text-body shadow-card transition-colors hover:bg-surface2 disabled:opacity-40"
+                  >
+                    −
+                  </button>
+                  <span
+                    className="min-w-16 text-center text-ink"
+                    style={{ fontSize: `${fontSize}px` }}
+                  >
+                    {fontSize} px
+                  </span>
+                  <button
+                    disabled={fontSize >= 24}
+                    onClick={() => stepFontSize(1)}
+                    className="h-7 w-7 rounded-full bg-canvas text-body shadow-card transition-colors hover:bg-surface2 disabled:opacity-40"
+                  >
+                    +
+                  </button>
+                </div>
+                <p className="mt-3 text-[11px] text-faint">
+                  与「设置 → 常规」同步，全书生效
+                </p>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* 写作区（relative 供划词浮动条定位） */}
@@ -432,6 +519,7 @@ export function Editor({ chapter, onSaved, onOpenBatchWrite, initialScroll, onSc
             <BubbleButton label="改写" onClick={() => void runTransform("rewrite")} />
             <BubbleButton label="润色" onClick={() => void runTransform("polish")} />
             <BubbleButton label="扩写" onClick={() => void runTransform("expand")} />
+            <BubbleButton label="去AI味" onClick={() => void runTransform("deslop")} />
           </div>
         )}
       </div>

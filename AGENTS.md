@@ -36,7 +36,7 @@ src/
                               卡片底部常驻「写作 / 详情」双按钮（防呆，不靠 ⋯ 藏入口）
     BookDetailView.tsx        书籍详情覆盖层：概览（简介 AI 生成/手改）· 大纲（分卷进度 + AI 生成）· 设定（分类浏览 + 逐条生成设定图）· 封面工坊
     Sidebar.tsx               写作态侧栏：章节/设定库双 Tab（二级面板）
-    Editor.tsx                写作编辑器：续写/划词浮动条/摘要面板/自动保存
+    Editor.tsx                写作编辑器：续写/划词浮动条/摘要面板/自动保存/字体字号快捷调整（Aa 弹层，与设置页同一份键双向同步）
     BatchWriteDialog.tsx      批量写章弹层：N 章/写完整本书；可最小化后台跑，右下角浮条看进度（状态在 App 层）
     OutlineView.tsx           大纲视图：番茄风简介（AI 生成/手改）+ 分卷大纲（进度管控）；
                               SynopsisSection / OutlineSection 拆为共用组件，书籍详情页概览/大纲页签复用
@@ -111,9 +111,11 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
 ### 命令清单（invoke 名 → 作用）
 
 - 作品/章节：`create_project(name, description?, targetTotalWords?, targetChapterWords?)` `update_project_targets` `list_projects` `rename_project` `delete_project`（级联清磁盘目录）`create_chapter` `list_chapters` `get_chapter` `save_chapter` `delete_chapter` `save_summary` `import_local_book(path)`（本地书籍导入 → { project, chapters, words, format }）
-- 设定库：`create_lore_entry` `list_lore_entries` `update_lore_entry` `delete_lore_entry` `set_lore_ref_image`（上传人物卡参考图）`remove_lore_ref_image` `generate_lore_ref_image`（按分类出设定图：人物三视图/地点场景概念图/物品设定图，D28） `collect_lore_entries`（AI 从摘要链搜集人物/地点/物品词条入库，8000 字预算，已登记标题跳过）
+- 设定库：`create_lore_entry` `list_lore_entries` `update_lore_entry` `delete_lore_entry` `set_lore_ref_image`（上传人物卡参考图）`remove_lore_ref_image` `generate_lore_ref_image`（按分类出设定图：人物三视图/地点场景概念图/物品设定图，D28） `collect_lore_entries`（AI 从摘要链搜集人物/地点/物品词条入库，8000 字预算，已登记标题跳过） `collect_lore_exhaustive`（穷尽式收集：逐章跑三段提取——变更+实体+关系一次补齐全书图鉴/关系网络/台账，
+  与写章后自动链路同源；分类新增 功法；已有词条不动、整章替换幂等；每章一次 LLM 调用带进度，单章失败跳过）
+- 体检整改：`make_check_fix_plan(project_id, report_id)`（评分报告→AI 整改方案：Markdown 方案 + 受影响章节定位 + 跨章改写指令；前端展示方案后用既有 enqueue_rewrite_chapters 一键入队，快照回滚链路复用）
 - 视频：`create_video(project_id, title, chapter_ids, mode?)`（mode: image 静图运镜 / video 图生视频）`generate_shot_video`（单镜重跑）`set_video_style`（全片统一画风 v13）`set_video_extras`（BGM/片头片尾，素材拷入视频目录）`list_videos` `get_video_detail` `delete_video` `save_narration` `update_shot_prompt` `generate_narration`（流式）`generate_storyboard` `generate_shot_image`（单镜重绘）`generate_missing_images`（进度）`synthesize_voices`（进度）`compose_video`（进度）`open_video_folder`
-- 番茄搜书：`fq_search(query)` `fq_distill_sample(book_id, max_chars?)`（样本字数可选 2000~30 万，默认 1.5 万；按 2200 字/章估算抓取量，≤300 章防呆）`fq_download(book_id, path, channel)`（进度事件）
+- 番茄搜书：`fq_search(query)` `fq_distill(db, book_id, max_chars?, channel)`（在线蒸馏一体化：抓样本→后端直接蒸馏入库，全文不进前端；max_chars 空=全本（整本抓取，进度事件），有值=2000~30 万按 2200 字/章估算、≤300 章防呆）`fq_download(book_id, path, channel)`（进度事件）
 - 设置：`get_setting` `set_setting`
 - 导出：`export_project(project_id, path)` → txt
 - 封面：`generate_cover(project_id, prompt, title, author)` → { path, data_url }；`list_covers`（预览走 asset 协议 fileUrl）
@@ -124,8 +126,14 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
   `open_douyin_window` `fill_douyin_caption(video_id)`（抖音上传页填标题+话题；视频文件人工拖入——文件框 JS 设不了）
 - 助手：`assistant_chat(project_id, chapter_id?, messages, channel)`（全书注入流式）
   `assistant_rewrite_chapter(chapter_id, instruction, channel)`（流式预览，前端确认后落库）
-  `locate_rewrite_scope` `rollback_rewrite_task` `scan_banned_words`（跨章改写定位/回滚/合规扫描）
-- AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand）`generate_summary(chapter_id)` `ai_bootstrap_chat_stream(messages, channel)`（对话式起书流式，[DRAFT] 草稿前端解析）`save_chat_session` `get_latest_chat_session` `list_chat_sessions` `delete_chat_session`（会话归档 v11，scene 区分起书/风格 v16）；台账：`extract_lore_changes(chapter_id)`（手动提取，幂等整章替换）`list_lore_changes(project_id, entry_id?, entry_title?)`
+  `locate_rewrite_scope` `rollback_rewrite_task` `scan_banned_words(project_id, words)`（跨章改写定位/回滚/合规+AI味扫描，返回 `ScanResult{hits,total_words}` 供密度统计）
+  `dialogue_stats(project_id)`（分章对话占比：引号内字符比例，本地启发式零 LLM——对话段 AI 检测值显著低于大段描写，
+   体检页「对话占比」区块，健康区间 20%~45%，低章节列出）
+  `apply_lore_changes(project_id)`（台账变更合并进设定库：new 建词条 / **update 由 LLM 重写为当前状态**（重写前快照）/ retire 停用；批量收尾自动跑）
+  `rollback_lore_apply(project_id)`（回滚最近一次应用：恢复快照 + 变更回待应用）
+  `list_lore_relations(project_id)`（关系三元组，人物资产/反向查询）
+  `compress_era_summaries(project_id, channel)`（远期摘要分层压缩：每 50 章一段梗概，增量，进度事件，体检页入口）
+- AI：`ai_continue(chapter_id, instruction?, channel)` `ai_transform(chapter_id, mode, selected_text, channel)`（mode: rewrite/polish/expand/deslop 去AI味，D29）`generate_summary(chapter_id)` `ai_bootstrap_chat_stream(messages, channel)`（对话式起书流式，[DRAFT] 草稿前端解析）`save_chat_session` `get_latest_chat_session` `list_chat_sessions` `delete_chat_session`（会话归档 v11，scene 区分起书/风格 v16）；台账：`extract_lore_changes(chapter_id)`（手动提取，幂等整章替换）`list_lore_changes(project_id, entry_id?, entry_title?)`
 
 ### 设置项 key（settings 表）
 
@@ -135,7 +143,8 @@ designs/                      界面设计稿：4 种风格 mockup（a/b/c/d-*.h
   也支持阿里云百炼/Token 套餐——base_url 含 aliyuncs.com 时自动走 DashScope 原生多模态协议（wan2.7-image 等，image_gen.rs `generate_image_dashscope`），尺寸分隔符 x→* 自动转换，人物卡参考图照常携带
 - 图生视频：`video_base_url` `video_api_key`（设置里与生图分家；留空回退 img_base_url/img_api_key，老配置零迁移）
   `video_model`（默认 doubao-seedance-1-0-pro-250528，推荐控制台开通 2.x 支持多图参考，需控制台开通视频模型）；`video_duration`（单镜秒数，默认 5，3~15）
-- 其他：`author_name`（封面作者名记忆）
+- 其他：`author_name`（封面作者名记忆）`batch_deslop`（批量写章每章生成后自跑去AI味 pass，"1"=开，D29）
+  `auto_apply_lore`（批量写章收尾自动应用设定变更，默认开，"0"=关，D31）
 - 配音：`tts_app_id` `tts_access_token` `tts_cluster`（默认 volcano_tts）`tts_voice`（火山控制台开通的 voice_type）
 - 视频产物：`%APPDATA%\com.novelstudio.app\videos\<project_id>\<video_id>\`（镜头图/镜头 mp4/配音/中间件/final.mp4）
 
@@ -171,26 +180,52 @@ chat_sessions(id, title, messages/*JSON*/, draft/*JSON*/, scene/*bootstrap/style
 chapter_backups(id, task_id, chapter_id, title, content, summary, created_at)  /* v12 跨章改写快照 */
 lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登场*/,
              entry_title, category, kind/*new登场/update变更/retire退场*/, detail,
-             created_at)                      /* 迁移 v17 设定变更台账（只读，无审核） */
+             created_at, applied_at/*应用到设定库的时间，0=待应用 v21*/)  /* 迁移 v17 台账，v21 活设定 */
+lore_relations(id, project_id CASCADE, chapter_id CASCADE, subject, predicate/*拥有/失去/使用/师承/敌对/结盟/属于/居住/创建*/,
+               object, created_at)  /* 迁移 v22 关系三元组（D31），整章替换幂等 */
+lore_backups(id, project_id CASCADE, entry_id, content, created_at)
+            /* 迁移 v22 词条快照：重写式 apply 前存底，rollback_lore_apply 按 ts 回滚（D31） */
+era_summaries(id, project_id CASCADE, order_start, order_end, text, created_at)
+             /* 迁移 v21 远期梗概：每 50 章一段压缩记忆，写作注入（D30） */
 ```
 
 ## 已完成（v0.1~v0.3，全部构建验证通过）
 
 - 写作：作品/章节管理、TipTap、自动保存（800ms 防抖 + 卸载兜底 + AI 前强刷）
-- AI 续写：流式、注入设定库 + 前情摘要 + 前文尾部，meta 明细可见
-- 划词 改写/润色/扩写：选区浮动条，位置感知流式替换（`makeInserter`）
+- AI 续写：流式、注入设定库 + 设定变更台账（近期 500 字）+ 前情摘要（远期梗概 + 近期 verbatim）+
+  大纲（含当前卷目标）+ 前文尾部，meta 明细可见（D30 记忆三件套 + D31 注入时融合：
+  命中词条连带其全量变更时间线 [剧情状态] 段，护栏最近 8 条 ≤280 字；提取三段输出
+  changes/entities/relations，新实体自动入库 keywords=标题）
+- 划词 改写/润色/扩写/去AI味：选区浮动条，位置感知流式替换（`makeInserter`）
+- 去AI味三层组合拳（D29，调研存档 docs/research-deai-2026-08.md）：①全部正文 prompt 注入
+  【去AI味】硬约束段（禁用词表+指纹句式禁令+情绪外化，续写/划词/批量写章/助手改写全覆盖）；
+  ②划词「去AI味」mode=deslop + 批量写章可选二遍 pass（batch_deslop 设置，失败回退原文）；
+  ③体检页 AI 味词表扫描出密度与高频词，命中章节一键入队去味整改
+- 【人味】生成侧（2026-08-22，朱雀实测后定调：不做本地检测器，全力生成侧）：
+  SYSTEM_PROMPT 加【人味】段（句长波动/词汇意外性"避开第一反应词"/毛边允许）+ 描写对话节奏约束
+  （连续静态描写≤两段必用对话或动作打断）；DESLOP 第 8 条「回人味」加法（原六条全是减法）；
+  风格卡注入带真人语感锚点（styles.example few-shot，A5）；体检页对话占比统计
+  （dialogue_stats，健康区间 20%~45%，低章节列表——实测对话段 AI 值 0.4~0.66 vs 描写段 0.99）
 - 设定库：关键词触发 + 常驻注入 + 预算截断
-- 番茄搜书：风格库「番茄搜书」在线搜索 → 一键蒸馏风格（抓开头样本走既有蒸馏管线，字数可选：5 千/1.5 万/3 万/5 万档位或自定义，蒸馏输入 1.2 万头中尾三段取样，大样本=中尾段取样更深）/ 全本下载 txt（进度条）；
+- 番茄搜书：风格库「番茄搜书」在线搜索 → 一键蒸馏风格（样本范围可选：全本 / 5 千/1.5 万/3 万/5 万档位 / 自定义，蒸馏输入 1.2 万头中尾三段取样，全本=中尾段取样覆盖全书；抓取与蒸馏均在后端一条龙完成，全文不进前端，进度事件汇报）/ 全本下载 txt（进度条）；
   接口：官方 API 直连（Cargo git 依赖 fanqie-rs，锁定 rev 906c6fd；官网阅读页有字体混淆，官方 App 接口返回密文由该库解密，文本干净）
 - 风格详情：风格库点卡片开详情弹层——完整风格卡/锚点词 + 示例片段全文 + 来源/样本/时间元信息，
   应用/对话优化/删除操作聚合在底部
 - 本地书籍导入：书架「导入书籍」按钮 → 系统选文件（txt/md/epub/docx）→ 后端解析切章 → 建作品 +
   章节批量入库 → 直接进入写作态；GBK 编码自适应、目录页空壳过滤、无标题全书按 ~2 万字切块
   （book_import.rs，12 个单元测试覆盖切章/编码/epub/docx 解析）
-- 前情摘要：单章生成（长章取头 3500+尾 2000）/批量补齐（进度条）
-- 设定变更台账：AI 从章节提取设定持久变更（登场/变更/退场），只读查看无审核流；
+- 前情摘要：单章生成（长章取头 3500+尾 2000）/批量补齐（进度条）；
+  远期梗概分层（v21/D30）：摘要超 15 章后可一键压缩，每 50 章一段 ≤200 字梗概（增量），
+  写作注入 = 远期梗概 600 字 + 近期摘要 1500 字（build_memory_section，体检页入口）
+- 设定变更台账（D31 三段提取）：AI 从章节一次提取变更（登场/变更/退场）+ 新实体（穷尽，含次要物品，
+  自动建词条）+ 关系三元组（拥有/师承/敌对…，存 lore_relations）；
   自动挂载在摘要生成/批量补齐/批量写章之后（失败静默不中断），手动可在台账页按章提取/全部补齐；
-  侧栏设定库 Tab「变更台账」按章分组，条目编辑器带变更时间线
+  写作时命中词条连带其全量变更时间线注入（注入时融合，D31）；
+  「应用变更到设定库」活设定：登场建词条/**变更由 LLM 重写词条为当前状态**（重写前快照）/退场停用
+  （applied_at 幂等，重新提取同章重置为未应用；批量收尾自动跑 auto_apply_lore，台账页可「回滚上次应用」）；
+  侧栏设定库 Tab「变更台账」按章分组，条目编辑器带变更时间线，详情面板带关系网络（正向拥有/反向持有者）。
+  可观测性：注入 meta 明细词条名带「（含剧情状态N条）」；批量写章任务结果带「设定库 +N 词条 · M 关系」统计；
+  手动提取返回「变更 X · 新词条 Y · 关系 Z」说明
 - 卷的概念：卷 = 分卷大纲节点（chapters.outline_item_id）；新章自动归入首个未完成卷，
   章节列表按卷分组（卷头带状态/章数，空卷显示作路线图），编辑器元信息行可手调所属卷；
   续写/批量注入带「本卷已写 N 章」+ 节奏纪律提示；批量收尾的大纲推进钳制为一次最多一卷
@@ -222,9 +257,14 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
 - 视频一致性工程（D28）：videos.style 全片统一画风生成期注入每镜（分镜 LLM 不再写画风词）；
   图生视频携带角色参考图（Seedance 2.x reference_image，老模型自动降级）；运动收敛词 +
   单镜时长设置（默认 5s）防尾段漂移
-- 书籍详情（书架卡片「详情」按钮）：概览/设定/封面三页签覆盖层；设定页分类页签筛选 + 搜索（名称/内容/关键词）、
-  点卡片看详情弹层（大图+完整信息），逐条 AI 生成设定图（人物三视图/地点场景概念图/物品设定图），
-  「AI 搜集设定」从全书摘要链自动提取人物/地点/物品词条入库；封面工坊并入此处 + 写作侧栏入口
+- 书籍详情（书架卡片「详情」按钮）：概览/设定/封面三页签覆盖层；设定页**左右分栏**——左侧分类页签 +
+  搜索 + 紧凑词条列表，右侧选中词条详情（设定图 + 内容 + **变更时间线** + 人物「拥有/关联」资产：
+  内容或台账提及该角色的物品/功法词条，可点击跳转），逐条 AI 生成设定图（人物三视图/地点场景概念图/物品设定图）；
+  顶部可切**关系网络总览**（按主体分组，谓词+对象+章节，点击跳词条）；
+  「AI 搜集（快）」从摘要链提取重要词条，「全面搜集」逐章三段提取一次补齐词条+关系+台账（含次要物品，分类含 功法）；
+  封面工坊并入此处 + 写作侧栏入口
+- 体检整改闭环：全书评分（维度含 **AI味** 专项）→ 报告下方「AI 出整改方案」（LLM 按报告定位受影响章节 +
+  出跨章改写指令，方案 Markdown 展示）→「一键整改」入队跨章改写（每章快照可整批回滚）
 - 写作 prompt 加【画面感】：重要人物/场景/物品首登场时自然带出外观细节（融入叙事不罗列），
   为封面与视频生成沉淀视觉素材
 - 风格库分类（v14）：styles.kind = text/image/video；图片画风（赛璐璐/古风/厚涂/写实电影/末世/扁平）
@@ -238,11 +278,15 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
   创建作品选写作风格（Bookshelf/AICreateWizard 已按 kind=text 过滤）
 - AI 起书（对话式）：书架「AI 辅助创建」→ 整页覆盖层，左对话右草稿四页签（基础信息/设定/大纲/开篇流程）；
   AI 策划多轮提问（题材/卖点/主角/爽点/篇幅，每轮至多 1~2 问），信息够了自动出草稿（[DRAFT] 标记 + JSON，
-  含分卷大纲 outline + 前 10 章章纲 opening，创建时落库为 outline_items，开篇流程作首节点）
+  含分卷大纲 outline + 前 10 章章纲 opening，创建时落库为 outline_items，开篇流程作首节点）；
+  双书名（v21 后）：name=番茄风（平台向钩子直给）+ real_name=真实书名（意象/双关/点题不剧透，
+  正式作品向），基础信息页签两张名片单选建书用哪个（默认番茄风，未选中的保留在草稿里）；
+  草稿简介（synopsis）带去AI味硬约束（钩子落具体反常事件、禁排比/空话/高频词）
   （批量写章上限 2000 章防呆；ai_bootstrap_chat_stream 流式 + AICreateWizard.tsx 整页覆盖层；会话自动存 chat_sessions 表（v11），
   「新会话」归档当前、「历史」面板可回看/继续/删除；创建成功后自动开新会话，旧的不丢）
-- 作品简介与大纲：侧栏第三 Tab；番茄风简介 AI 生成/手改；分卷大纲节点可编辑可标记完成，
-  进度条管控；**大纲注入续写 prompt**（600 字预算，首个未完成节点标 ◀当前）；
+- 作品简介与大纲：侧栏第三 Tab；番茄风简介 AI 生成/手改（生成 prompt 带去AI味硬约束：钩子落具体事件、
+  禁排比/「这不是X而是Y」/「命运的齿轮」类空话/高频词）；分卷大纲节点可编辑可标记完成，
+  进度条管控；**大纲注入续写 prompt**（600 字预算，首个未完成节点标 ◀当前 + 本卷目标 content 80 字）；
   书籍详情页概览签复用简介区（AI 生成简介）、新增大纲页签复用大纲区（AI 生成大纲 + 节点编辑），
   与写作态同一组件同一数据
 - 批量写章：Editor「批量写章」弹层（零章节新书的空状态页也有入口）→ 后端 generate_chapters
@@ -256,12 +300,14 @@ lore_changes(id, project_id CASCADE, chapter_id CASCADE, entry_id/*可空=新登
   「改写本章」流式出预览，点「替换原文并更新摘要」才落库（带前后章摘要保连贯，>8000 字引导划词分段）；
   「跨章改写」LLM 按摘要链定位受影响章节 → 勾选确认 → 队列逐章改写（每章先快照 chapter_backups v12，
   任务面板可整批回滚；改写后自动重生成摘要）
-- 合规扫描：评分页填敏感词 → 纯文本检索命中清单（章节/词/上下文）→ 一键入队整改（复用跨章改写）
+- 合规/AI味扫描：评分页填词（内置 AI 味词表一键填入，src/lib/aiWords.ts）→ 纯文本检索命中清单
+  （章节/词/上下文 + 密度 处/万字 + 高频词 Top8）→ 一键入队整改（复用跨章改写；AI 味词表命中走去味指令）
 - 写作风格库：AppRail「风格」页，两条路——对话生成（描述风格如"古龙风"→ 出卡 → 追问微调 → 保存）；
   本地 txt/粘贴文本取样本 → LLM 蒸馏风格卡
   （句式/用词/视角/对话/画面五节，≤400 字，纯文笔特征——题材/基调/钩子由作者写书时按简介大纲自定，
   不进风格卡；上传 txt 走后端直读不进前端，粘贴文本照旧）→ 创建作品时选用；
-  注入 AI 续写/批量写章/划词三件套的 system prompt（预算 800 字，meta 明细可见"风格：XXX"）
+  注入 AI 续写/批量写章/划词三件套的 system prompt（预算 800 字 + 真人语感锚点 200 字——
+  styles.example 真人原文片段作【真人语感参照】few-shot，模仿语感不抄内容，A5；meta 明细可见"风格：XXX"）
 - 发布到番茄：AppRail「发布」页 → open_fanqie_window 开番茄后台窗口（fanqienovel.com/main/writer/，扫码登录持久化免登）
   → fill_chapter_draft 把章节填进当前编辑页（fill-only，发布按钮人工点；选择器集中在 commands_publish.rs 顶部）
 

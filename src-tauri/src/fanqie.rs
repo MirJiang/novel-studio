@@ -14,8 +14,6 @@ use tauri::ipc::Channel;
 
 /// 每批章数（官方接口上限 30）
 const BATCH_SIZE: usize = 30;
-/// 蒸馏样本默认目标字数（蒸馏输入上限 12000，多抓一点留头中尾取样余量）
-const SAMPLE_CHARS: usize = 15000;
 /// 批次间隔（礼貌限速）
 const BATCH_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
@@ -41,14 +39,6 @@ pub struct FqCatalog {
     pub name: String,
     pub author: String,
     pub chapters: Vec<FqChapter>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct FqSample {
-    pub name: String,
-    pub author: String,
-    pub chars: usize,
-    pub text: String,
 }
 
 fn new_client() -> Result<FanqieClient, String> {
@@ -228,27 +218,47 @@ fn fetch_chapters(
     Ok(results)
 }
 
-/// 抓蒸馏样本：从第 1 章顺序抓到目标字数，返回书名+样本全文
+/// 在线蒸馏结果（全文留在后端直接蒸馏，不回传前端）
+#[derive(Debug, Serialize)]
+pub struct FqDistillResult {
+    pub name: String,
+    pub chars: usize,
+}
+
+/// 在线蒸馏：抓正文样本 → 后端直接蒸馏入库（几百万字的全本不进前端）。
+/// max_chars 空 = 全本（整本抓取较慢，进度事件汇报）；有值 = 从第 1 章抓到目标字数。
 #[tauri::command]
-pub async fn fq_distill_sample(
+pub async fn fq_distill(
+    db: tauri::State<'_, crate::db::Db>,
     book_id: String,
     max_chars: Option<usize>,
-) -> Result<FqSample, String> {
+    channel: Channel<ProgressEvent>,
+) -> Result<FqDistillResult, String> {
     let id = book_id.trim().to_string();
     // 自选样本字数（默认 1.5 万）；蒸馏输入上限 1.2 万走头中尾三段取样，
-    // 大样本的意义在于中/尾段取样位置更深。防呆上限 30 万字
-    let max = max_chars.unwrap_or(SAMPLE_CHARS).clamp(2000, 300_000);
-    tokio::task::spawn_blocking(move || {
+    // 样本越大中/尾段取样位置越深。防呆上限 30 万字；None = 全本
+    let max = max_chars.map(|m| m.clamp(2000, 300_000));
+    let (name, author, text) = tokio::task::spawn_blocking(move || {
         let client = new_client()?;
         let cat = catalog_blocking(&id)?;
-        // 一章约 2~3 千字，按 2200 保守估算 + 5 章余量；章数防呆上限 300（10 批 ≈ 4s 限速延迟）
-        let est = (max / 2200 + 5).min(300);
-        let take = cat.chapters.len().min(est);
-        let results = fetch_chapters(&client, &id, &cat.chapters[..take], |_, _| {})?;
+        let take = match max {
+            None => cat.chapters.len(),
+            // 一章约 2~3 千字，按 2200 保守估算 + 5 章余量；章数防呆上限 300
+            Some(m) => cat.chapters.len().min((m / 2200 + 5).min(300)),
+        };
+        let results = fetch_chapters(&client, &id, &cat.chapters[..take], |done, tot| {
+            let _ = channel.send(ProgressEvent::Progress {
+                current: done as i64,
+                total: tot as i64,
+                label: format!("已抓取 {done}/{tot} 章"),
+            });
+        })?;
         let mut text = String::new();
         for (title, body) in &results {
-            if text.chars().count() >= max {
-                break;
+            if let Some(m) = max {
+                if text.chars().count() >= m {
+                    break;
+                }
             }
             text.push_str(&format!("\n\n{}\n{}", title, body));
         }
@@ -256,15 +266,21 @@ pub async fn fq_distill_sample(
         if chars < 500 {
             return Err("抓到的正文太少（接口可能有变），换一本或稍后再试".to_string());
         }
-        Ok(FqSample {
-            name: cat.name,
-            author: cat.author,
-            chars,
-            text,
-        })
+        let _ = channel.send(ProgressEvent::Progress {
+            current: take as i64,
+            total: take as i64,
+            label: format!("样本 {chars} 字，蒸馏中…"),
+        });
+        Ok((cat.name, cat.author, text))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    let source = format!("番茄《{name}》{author}（在线样本）");
+    crate::commands_style::distill_and_save(&db, &name, &source, &text).await?;
+    Ok(FqDistillResult {
+        name,
+        chars: text.chars().count(),
+    })
 }
 
 /// 下载全本为 txt（进度事件；失败章节留占位行不中断），返回结果说明

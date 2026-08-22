@@ -50,8 +50,8 @@ export function LoreLedgerView({
     setError(null);
     setInfo(null);
     try {
-      const n = await api.extractLoreChanges(chapterId);
-      setInfo(n > 0 ? `本章提取到 ${n} 条变更` : "本章没有持久的设定变更");
+      const msg = await api.extractLoreChanges(chapterId);
+      setInfo(`本章提取：${msg}`);
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -87,6 +87,43 @@ export function LoreLedgerView({
     }
   };
 
+  /** 应用待处理变更到设定库（活设定：LLM 重写词条为当前状态，重写前快照） */
+  const applyChanges = async () => {
+    if (busy || unapplied === 0) return;
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      setInfo(await api.applyLoreChanges(projectId));
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 回滚最近一次应用：恢复词条内容快照 + 变更回到待应用 */
+  const rollbackApply = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      setInfo(await api.rollbackLoreApply(projectId));
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unapplied = useMemo(
+    () => changes.filter((c) => !c.applied_at).length,
+    [changes],
+  );
+
   /** 按章分组（列表本身已按章节序号倒序，直接切连续段） */
   const groups = useMemo(() => {
     const out: { chapterId: number; title: string; rows: LoreChange[] }[] = [];
@@ -118,6 +155,26 @@ export function LoreLedgerView({
           </span>
           <div className="ml-auto flex gap-2">
             <button
+              disabled={busy || unapplied === 0}
+              title={
+                unapplied === 0
+                  ? "没有待应用的变更"
+                  : "把台账变更合并进设定库：登场建词条、变更 LLM 重写为当前状态、退场停用"
+              }
+              onClick={() => void applyChanges()}
+              className="rounded-full bg-card/70 px-3.5 py-1.5 text-[13px] text-body shadow-card transition-colors hover:bg-surface disabled:opacity-40"
+            >
+              应用变更到设定库{unapplied > 0 ? `（${unapplied}）` : ""}
+            </button>
+            <button
+              disabled={busy}
+              title="恢复最近一次应用前的词条内容，变更回到待应用"
+              onClick={() => void rollbackApply()}
+              className="rounded-full bg-card/70 px-3.5 py-1.5 text-[13px] text-muted shadow-card transition-colors hover:bg-surface hover:text-body disabled:opacity-40"
+            >
+              回滚上次应用
+            </button>
+            <button
               disabled={busy || currentChapterId == null}
               title={
                 currentChapterId == null
@@ -140,7 +197,8 @@ export function LoreLedgerView({
         </div>
         <p className="mt-1.5 text-xs leading-5 text-muted">
           每章对设定造成的持久变化（物品得失、地图解锁、境界提升、关系/状态转变），AI
-          自动提取——生成摘要、批量补齐、批量写章时都会顺带跑；也可手动按章提取。只读查看，不会改动设定库。
+          自动提取——生成摘要、批量补齐、批量写章时都会顺带跑；也可手动按章提取。写章时自动注入近期变更；
+          「应用变更到设定库」把变化合并进设定条目（登场建卡、变更追加、退场停用），重复提取同章幂等。
         </p>
 
         {progress && (

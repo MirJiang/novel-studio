@@ -123,6 +123,8 @@ pub async fn generate_synopsis(db: State<'_, Db>, project_id: i64) -> Result<Str
                 "你是网文平台金牌编辑，专门写番茄小说风格的作品简介。\
                 要求：100~150 字；第一句就是钩子（反常/悬念/冲突）；点出主角的金手指或最大看点；\
                 结尾抛悬念或反转预告；短句、有节奏感、绝不平淡复述剧情。\
+                去AI味硬约束：钩子落在具体的反常事件或细节上，不落抽象大词；禁三连排比与「这不是X，而是Y」；\
+                禁「命运的齿轮」「一场关于XX的XX」类空话；不用仿佛/一丝/一抹等高频词；结尾抛悬念，不写感悟升华。\
                 只输出简介正文，不要书名、不要解释。"
                     .to_string(),
             ),
@@ -534,7 +536,8 @@ const MAX_LORE_CHARS: usize = 2000;
 /// 前情摘要注入的字符预算
 const MAX_SUMMARY_CHARS: usize = 1500;
 
-// 写作方法论内置自 chinese-webnovel-skill（webnovel-writing）的网文方法论，见 D24
+// 写作方法论内置自 chinese-webnovel-skill（webnovel-writing）的网文方法论，见 D24；
+// 去AI味负面清单源自 oh-story story-deslop 禁用词表，见 docs/research-deai-2026-08.md（D29）
 const SYSTEM_PROMPT: &str = "你是一位经验丰富的中文网文作家（番茄/起点商业网文向）。\
 根据给定的前文继续写作，保持文风、叙事视角、人称与设定一致。\n\
 【章法】\n\
@@ -549,8 +552,26 @@ const SYSTEM_PROMPT: &str = "你是一位经验丰富的中文网文作家（番
 不收在总结句、讲道理或把悬念解释没的解释上\n\
 【语言】\n\
 - 对白要有目的：带新信息、带关系位置、带压迫感；每个人说话带身份感，不像说明书\n\
-- 去 AI 味是硬要求：能用动作不用总结，能用对白不用解释，能写具体不写抽象；\
-不写“空气仿佛凝固”式套话，不堆辞藻，句式长短错落\n\
+- 描写与对话交替推进：连续静态描写（环境/外貌/心理）不超过两段就用对话或动作打断，\
+能用对话交代的信息不用叙述——大段匀速描写是 AI 检测和读者观感的双重重灾区\n\
+- 能用动作不用总结，能用对白不用解释，能写具体不写抽象；不堆辞藻\n\
+【去AI味】（硬约束，成稿前逐条自查）\n\
+- 禁用词：仿佛、宛如、犹如、一丝、一抹、些许、几分、隐约、深吸一口气、缓缓、不禁、\
+微微、轻轻、淡淡、眼中闪过、嘴角勾起、眉头微皱、瞳孔骤缩、心中一动、心中一沉、难以言喻\n\
+- 禁用句式：三句以上排比、「不是A，而是B」高频复现、「他感到…」「那是一种…的感觉」、\
+「…般的」「…似的」、「空气仿佛凝固」「静得能听见针落」\n\
+- 情绪不直接命名，用动作、生理反应或对话行为外化（不写“他很恐惧”，写他的手在抖）\n\
+- 描写做减法：紧张/冲突场景不插大段静态描写（外貌罗列/环境说明/名词解释），形容词克制，\
+一句至多两个，动词名词优先\n\
+- 对话少用“××说道/问道”标签，允许打断、省略、答非所问，带口语颗粒\n\
+- 段落长短错落，穿插一两句的短段；每段结尾不总结不抒情，章末停在动作或对话上\n\
+【人味】（人类写作的统计指纹，成稿前自查）\n\
+- 句长要有波动：偶尔一个词收尾（“他没动。”），偶尔一句拉长到两三行——连续三句字数\
+相近就改一句，匀速节奏是机器指纹\n\
+- 用词避开第一反应：脑子里最先蹦出的那个词如果太顺太通用，换一个更具体、更贴这个场景的\
+（“安全”的词=高频词=AI味）\n\
+- 保留毛边：允许口语插入语（“怎么说呢”“得”）、破折号打断、半句改口——真人写作不完美，\
+太干净反而不像人写的\n\
 【画面感】\n\
 - 重要人物、场景、关键物品首次登场时，顺着角色的视线或动作自然带出具体外观\
 （长相/穿着/标志物、环境布局/光线/氛围、物品材质/形制），一两句融入叙事，\
@@ -561,8 +582,29 @@ const SYSTEM_PROMPT: &str = "你是一位经验丰富的中文网文作家（番
 const TRANSFORM_SYSTEM_PROMPT: &str = "你是一位经验丰富的中文网文编辑。\
 按用户要求处理给定段落，保持文风、叙事视角、人称与设定一致。\n\
 语言硬要求：能用动作不用总结，能用对白不用解释，能写具体不写抽象；\
-对白要带身份感和目的；不堆网文套话和辞藻，句式长短错落，情绪靠动作和反应落地而不是直接命名。\
+对白要带身份感和目的；不堆网文套话和辞藻，句式长短错落，情绪靠动作和反应落地而不是直接命名。\n\
+去AI味硬约束：不用 仿佛/一丝/一抹/深吸一口气/眼中闪过/嘴角勾起/心中一动 等高频词；\
+不写三连排比与「不是A，而是B」；句式长短错落，结尾不总结升华。\
 直接输出处理后的正文，不要输出解释或任何元信息。";
+
+/// 去AI味改写要求：划词「去AI味」与批量写章去味 pass 共用。
+/// 六条压缩自 oh-story story-deslop 六门禁（词表替换→句式→心理外化→节奏→对话→结尾），见 docs/research-deai-2026-08.md
+const DESLOP_REQUIREMENT: &str = "去掉这段文字的AI味，只改味不改故事：保持人称、视角、情节与信息量不变，篇幅基本不变（删凑字描写后允许略短）。逐条自查：\n\
+1. 替换 AI 高频词（仿佛、宛如、犹如、一丝、一抹、些许、隐约、深吸一口气、缓缓、不禁、\
+微微、轻轻、淡淡、眼中闪过、嘴角勾起、眉头微皱、瞳孔骤缩、心中一动、心中一沉、难以言喻），\
+换成具体动作或直陈其事\n\
+2. 拆掉套路句式：三句以上排比、「不是A，而是B」、「他感到…」、「…般的」「…似的」、\
+「空气仿佛凝固」类套话\n\
+3. 心理描写外化：情绪改用动作、生理反应、对话行为呈现，不直接命名\n\
+4. 打破均匀节奏：超长复合句拆短，长段之间穿插一两句的短段\n\
+5. 对话去腔调：能删的「说道/问道」标签就删，允许打断、省略、答非所问\n\
+6. 描写做减法：删掉不为剧情或情绪服务的环境/心理/外貌描写（凑字数的水段，\
+含紧张场景里插入的大段静态描写），删后不补；形容词一句至多两个\n\
+7. 段落结尾不总结、不抒情、不升华\n\
+8. 回人味（加法，最后做）：句长拉开波动——偶尔一个词收尾、偶尔一句拉长；\
+用具体词替换太顺太通用的词；保留或补一两处口语毛边（插入语、顿挫、答非所问），\
+允许不完美——太干净反而假\n\
+只输出改写后的正文，不要解释。";
 
 pub(crate) fn load_llm_config(db: &Db) -> LlmConfig {
     let read = |key: &str, default: &str| {
@@ -595,10 +637,12 @@ fn tail_chars(text: &str, max: usize) -> String {
 }
 
 /// 命中规则：常驻注入，或任一关键词出现在上下文中。
-/// 返回 (设定文本, 注入的条目标题)
+/// 注入时融合（D31）：命中的词条连同它的全量变更时间线一起注入——词条是开书快照，
+/// [剧情状态] 是台账事件流，AI 看到的永远是"当前状态"，不受全局近期窗口限制
 pub(crate) fn build_lore_section(
     entries: &[LoreEntry],
     context_text: &str,
+    ledger: &[db::LoreChangeRow],
 ) -> (String, Vec<String>) {
     let mut section = String::new();
     let mut titles = Vec::new();
@@ -612,14 +656,77 @@ pub(crate) fn build_lore_section(
         if !hit {
             continue;
         }
-        let block = format!("◆ {}（{}）\n{}\n\n", e.title, e.category, e.content.trim());
+        let (timeline, tl_count) = entry_change_lines(ledger, e);
+        let block = format!(
+            "◆ {}（{}）\n{}{}\n\n",
+            e.title,
+            e.category,
+            e.content.trim(),
+            timeline
+        );
         if section.len() + block.len() > MAX_LORE_CHARS {
             break; // 超预算就截断，保证 prompt 可控
         }
         section.push_str(&block);
-        titles.push(e.title.clone());
+        // 注入明细可观测（红线4）：词条名带上融合的剧情状态条数，崩了能分清"没写设定"还是"没注入时间线"
+        titles.push(if tl_count == 0 {
+            e.title.clone()
+        } else {
+            format!("{}（含剧情状态{tl_count}条）", e.title)
+        });
     }
     (section, titles)
+}
+
+/// 单词条时间线预算：最多带最近 8 条、合计 ≤280 字（超出的更早变更省略——远期梗概兜底）
+const ENTRY_CHANGE_KEEP: usize = 8;
+const ENTRY_CHANGE_CHARS: usize = 280;
+
+/// 词条的 [剧情状态] 段 + 实际注入条数：该词条全量变更按章节正序（从最近往回取到预算内，再反转），
+/// 退场/登场带标记；无变更返回 (空串, 0)
+fn entry_change_lines(ledger: &[db::LoreChangeRow], e: &LoreEntry) -> (String, usize) {
+    let mut mine: Vec<&db::LoreChangeRow> = ledger
+        .iter()
+        .filter(|c| c.entry_id == Some(e.id) || c.entry_title == e.title)
+        .collect();
+    if mine.is_empty() {
+        return (String::new(), 0);
+    }
+    mine.sort_by_key(|c| c.chapter_order);
+    let omitted = mine.len().saturating_sub(ENTRY_CHANGE_KEEP);
+    let mut picked: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    for c in mine.iter().rev().take(ENTRY_CHANGE_KEEP) {
+        let tag = match c.kind.as_str() {
+            "new" => "登场",
+            "retire" => "退场",
+            _ => "",
+        };
+        let line = if tag.is_empty() {
+            format!("第{}章：{}", c.chapter_order, c.detail.trim())
+        } else {
+            format!("第{}章{}：{}", c.chapter_order, tag, c.detail.trim())
+        };
+        if total + line.len() > ENTRY_CHANGE_CHARS && !picked.is_empty() {
+            break;
+        }
+        total += line.len();
+        picked.push(line);
+    }
+    let count = picked.len();
+    picked.reverse();
+    (
+        format!(
+            "\n[剧情状态]（当前状态以此为准{}）{}",
+            if omitted > 0 {
+                format!("，更早 {omitted} 条已略")
+            } else {
+                String::new()
+            },
+            picked.join("；")
+        ),
+        count,
+    )
 }
 
 /// 前情摘要区块：当前章节之前所有章的摘要，超预算时优先保留近期的
@@ -638,10 +745,52 @@ fn build_summary_section(summaries: &[(String, String)]) -> String {
     picked.join("\n")
 }
 
-/// 风格注入的字符预算
-const MAX_STYLE_CHARS: usize = 800;
+/// 远期梗概合计注入预算（超出保最新——更早期卷的走向大纲已覆盖）
+const ERA_CHARS: usize = 600;
 
-/// 作品绑定的写作风格：返回 (风格名, 注入段)；未绑定或风格卡为空时返回 None
+/// 写作记忆区块：远期梗概（era_summaries 压缩记忆）+ 近期章摘要（verbatim，近期优先）。
+/// 返回 (区块文本, 远期梗概段数)；没压缩过远期时就是纯摘要（与旧行为一致）
+fn build_memory_section(
+    db: &Db,
+    project_id: i64,
+    next_order: i64,
+    summaries: &[(String, String)],
+) -> (String, usize) {
+    let eras: Vec<db::EraSummary> = db
+        .list_era_summaries(project_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|e| e.order_end < next_order)
+        .collect();
+    let era_count = eras.len();
+    let mut parts: Vec<String> = Vec::new();
+    if era_count > 0 {
+        let joined = eras
+            .iter()
+            .map(|e| e.text.trim())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !joined.is_empty() {
+            parts.push(format!(
+                "【远期梗概】（更早章节的压缩记忆）\n{}",
+                tail_chars(&joined, ERA_CHARS)
+            ));
+        }
+    }
+    let recent = build_summary_section(summaries);
+    if !recent.is_empty() {
+        parts.push(format!("【前情摘要】\n{recent}"));
+    }
+    (parts.join("\n\n"), era_count)
+}
+
+/// 风格注入的字符预算（风格卡 800 + 真人语感锚点 200）
+const MAX_STYLE_CHARS: usize = 800;
+const MAX_STYLE_EXAMPLE_CHARS: usize = 200;
+
+/// 作品绑定的写作风格：返回 (风格名, 注入段)；未绑定或风格卡为空时返回 None。
+/// 蒸馏卡的 example 是真人原文片段——抽象描述教不会语感，真人片段才教得会（A5 人味锚点）
 pub(crate) fn style_section(db: &Db, project_id: i64) -> Option<(String, String)> {
     let project = db
         .list_projects()
@@ -656,20 +805,27 @@ pub(crate) fn style_section(db: &Db, project_id: i64) -> Option<(String, String)
     if guide.is_empty() {
         return None;
     }
-    Some((
-        style.name.clone(),
-        format!(
-            "【写作风格】（正文须模仿以下风格特征）\n{}",
-            head_chars(guide, MAX_STYLE_CHARS)
-        ),
-    ))
+    let mut section = format!(
+        "【写作风格】（正文须模仿以下风格特征）\n{}",
+        head_chars(guide, MAX_STYLE_CHARS)
+    );
+    // 真人语感锚点（A5）：蒸馏时摘的真人原文片段，few-shot 直接模仿语感与呼吸——不抄内容
+    let example = style.example.trim();
+    if !example.is_empty() {
+        section.push_str(&format!(
+            "\n\n【真人语感参照】（模仿这段真人文字的语感、节奏与呼吸，绝不抄内容）\n{}",
+            head_chars(example, MAX_STYLE_EXAMPLE_CHARS)
+        ));
+    }
+    Some((style.name.clone(), section))
 }
 
 /// 大纲注入的字符预算
 const MAX_OUTLINE_CHARS: usize = 600;
 
-/// 全书大纲区块：节点名 + 状态，首个未完成节点标记为当前进度（带本卷已写章数）。
-/// 卷 = 大纲节点；章数进度 + 收尾节奏纪律是给 AI 的节拍器，防少数几章冲完一卷
+/// 全书大纲区块：节点名 + 状态，首个未完成节点标记为当前进度（带本卷已写章数与卷目标）。
+/// 卷 = 大纲节点；章数进度 + 收卷节奏纪律是给 AI 的节拍器，防少数几章冲完一卷；
+/// 当前卷的 content（阶段目标/主要冲突/末局面变化）一并注入——AI 要知道这一卷在打什么
 fn build_outline_section(
     items: &[OutlineItem],
     counts: &std::collections::HashMap<i64, i64>,
@@ -682,10 +838,18 @@ fn build_outline_section(
     for (i, item) in items.iter().enumerate() {
         let mark = if Some(i) == first_planned {
             let n = counts.get(&item.id).copied().unwrap_or(0);
-            if item.target_chapters > 0 {
-                format!(" ◀当前卷（已写 {n} 章 / 全卷预计约 {} 章）", item.target_chapters)
+            let goal = if item.content.trim().is_empty() {
+                String::new()
             } else {
-                format!(" ◀当前卷（已写 {n} 章）")
+                format!("——本卷目标：{}", head_chars(item.content.trim(), 80))
+            };
+            if item.target_chapters > 0 {
+                format!(
+                    " ◀当前卷（已写 {n} 章 / 全卷预计约 {} 章）{goal}",
+                    item.target_chapters
+                )
+            } else {
+                format!(" ◀当前卷（已写 {n} 章）{goal}")
             }
         } else if item.status == "done" {
             "【已完成】".to_string()
@@ -733,15 +897,23 @@ pub async fn ai_continue(
     let plain = db::html_to_text(&chapter.content);
     let context_tail = tail_chars(&plain, CONTEXT_TAIL_CHARS);
 
-    // 设定库注入：常驻词条 + 关键词命中词条
+    // 设定库注入（D31 注入时融合）：常驻/关键词命中词条 + 各自的变更时间线
     let entries = db.list_lore_entries(chapter.project_id).unwrap_or_default();
-    let (lore_section, injected) = build_lore_section(&entries, &context_tail);
+    let ledger = db
+        .list_lore_changes(chapter.project_id, None, None)
+        .unwrap_or_default();
+    let (lore_section, injected) = build_lore_section(&entries, &context_tail, &ledger);
 
-    // 前情摘要注入：当前章之前所有章的摘要
+    // 前情摘要注入：远期梗概（压缩记忆）+ 近期章摘要
     let summaries = db
         .list_summaries_before(chapter.project_id, chapter.order_index)
         .unwrap_or_default();
-    let summary_section = build_summary_section(&summaries);
+    let (summary_section, era_count) = build_memory_section(
+        &db,
+        chapter.project_id,
+        chapter.order_index,
+        &summaries,
+    );
 
     // 大纲注入：全书节点 + 当前进度标记（管控整本书的走向）
     let outline = db.list_outline(chapter.project_id).unwrap_or_default();
@@ -765,6 +937,9 @@ pub async fn ai_continue(
     }
     if !summaries.is_empty() {
         notes.push(format!("前情摘要 {} 章", summaries.len()));
+        if era_count > 0 {
+            notes.push(format!("远期梗概 {era_count} 段"));
+        }
     } else if chapter.order_index > 1 {
         notes.push("前情摘要缺失（可在章节里点「生成摘要」）".to_string());
     }
@@ -778,7 +953,7 @@ pub async fn ai_continue(
     let mut system = if lore_section.is_empty() {
         SYSTEM_PROMPT.to_string()
     } else {
-        format!("{SYSTEM_PROMPT}\n\n【设定资料】（写作时必须严格遵守）\n{lore_section}")
+        format!("{SYSTEM_PROMPT}\n\n【设定资料】（写作时必须严格遵守，[剧情状态] 为当前状态）\n{lore_section}")
     };
     if let Some((_, section)) = &style {
         system.push_str("\n\n");
@@ -818,7 +993,7 @@ pub async fn ai_continue(
     .map_err(|e| e.to_string())
 }
 
-/// 划词处理：改写 / 润色 / 扩写
+/// 划词处理：改写 / 润色 / 扩写 / 去AI味
 #[tauri::command]
 pub async fn ai_transform(
     db: State<'_, Db>,
@@ -843,6 +1018,7 @@ pub async fn ai_transform(
             "扩写",
             "扩写这段文字：保持情节走向不变，丰富动作、心理、环境等细节描写，篇幅扩充到原来的 2~3 倍。",
         ),
+        "deslop" => ("去AI味", DESLOP_REQUIREMENT),
         _ => return Err(format!("未知的处理模式: {mode}")),
     };
 
@@ -855,7 +1031,10 @@ pub async fn ai_transform(
     let context_tail = tail_chars(&plain, 1500);
     let entries = db.list_lore_entries(chapter.project_id).unwrap_or_default();
     let lore_context = format!("{context_tail}\n{selected_text}");
-    let (lore_section, injected) = build_lore_section(&entries, &lore_context);
+    let ledger = db
+        .list_lore_changes(chapter.project_id, None, None)
+        .unwrap_or_default();
+    let (lore_section, injected) = build_lore_section(&entries, &lore_context, &ledger);
 
     let note = if injected.is_empty() {
         format!("{mode_label}｜未注入设定")
@@ -1061,15 +1240,19 @@ pub async fn generate_missing_summaries(
 
 // ---------- 设定变更台账 ----------
 
-const LORE_CHANGES_SYSTEM: &str = "你是小说设定管理员。阅读章节内容，找出其中对设定状态产生持久变更的事实：\
-新登场的人物/地点/物品/伏笔，已有设定的状态变化（获得/失去/境界提升/区域解锁/关系破裂…），设定退场或失效。\
-只输出 JSON 数组，每项：\
-{\"entry_title\": \"条目名（与给定设定库条目保持一致；新事物用简洁命名）\", \
-\"category\": \"人物/世界观/地点/物品/伏笔/其他\", \
-\"kind\": \"new|update|retire\", \
-\"detail\": \"一句话说明本章造成的变更\"}。\
-打完就结束的战斗、一次性对话等过程性事件不算设定变更；没有持久变更就输出 []。\
-只输出 JSON，不要解释。";
+const LORE_CHANGES_SYSTEM: &str = "你是小说设定管理员。阅读章节内容，做三件事：\
+1.【变更】找出对设定状态产生持久变更的事实：新登场的重要人物/地点/物品/伏笔，已有设定的状态变化\
+（获得/失去/境界提升/区域解锁/关系破裂…），设定退场或失效。打完就结束的战斗、一次性对话等过程性事件不算。\
+2.【实体】登记本章新出现的所有具体元素——有名有姓或有称呼的人物（含配角）、任何具体物件\
+（武器/道具/信物/消耗品，哪怕一把无关紧要的小刀）、具体地点、功法/技能名称。\
+已在【已登记词条】清单里的跳过；每条给一两句说明（外观/来历/用途/与谁相关），正文没写的不要编。\
+3.【关系】提取本章建立或改变的人物-物品/人物-人物关系，谓词用：拥有/失去/使用/师承/敌对/结盟/属于/居住/创建。
+只输出一个 JSON 对象（各段可为空数组），不要解释：\
+{\"changes\": [{\"entry_title\": \"条目名（与设定库条目一致；新事物用简洁命名）\", \
+\"category\": \"人物/世界观/地点/物品/功法/伏笔/其他\", \"kind\": \"new|update|retire\", \
+\"detail\": \"一句话说明本章造成的变更\"}], \
+\"entities\": [{\"category\": \"人物/世界观/地点/物品/功法/其他\", \"title\": \"名称\", \"desc\": \"一两句说明\"}], \
+\"relations\": [{\"subject\": \"主体名\", \"predicate\": \"拥有/失去/使用/师承/敌对/结盟/属于/居住/创建\", \"object\": \"对象名\"}]}";
 
 #[derive(Debug, serde::Deserialize)]
 struct RawLoreChange {
@@ -1079,17 +1262,42 @@ struct RawLoreChange {
     detail: Option<String>,
 }
 
+/// 提取输出的实体与关系段（宽容解析：缺字段当空）
+#[derive(Debug, serde::Deserialize, Default)]
+struct RawExtract {
+    #[serde(default)]
+    changes: Vec<RawLoreChange>,
+    #[serde(default)]
+    entities: Vec<RawEntity>,
+    #[serde(default)]
+    relations: Vec<RawRelation>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawEntity {
+    category: Option<String>,
+    title: Option<String>,
+    desc: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawRelation {
+    subject: Option<String>,
+    predicate: Option<String>,
+    object: Option<String>,
+}
+
 /// 从章节提取设定变更（共享实现：手动命令 + 摘要链路自动挂载）。
-/// 产出整章替换（重复提取幂等）；返回条数
+/// 产出整章替换（重复提取幂等）；返回三段统计
 async fn extract_chapter_lore_changes(
     db: &Db,
     cfg: &LlmConfig,
     chapter_id: i64,
-) -> Result<usize, String> {
+) -> Result<ExtractOutcome, String> {
     let chapter = db.get_chapter(chapter_id).map_err(|e| e.to_string())?;
     let plain = db::html_to_text(&chapter.content);
     if plain.trim().is_empty() {
-        return Ok(0);
+        return Ok(ExtractOutcome::default());
     }
     let excerpt = chapter_excerpt(&plain);
 
@@ -1130,15 +1338,29 @@ async fn extract_chapter_lore_changes(
     .await
     .map_err(|e| e.to_string())?;
 
-    // 宽容解析：找不到 JSON 数组 / 解析失败就当无变更（自动链路不报错）
-    let start = raw.find('[');
-    let end = raw.rfind(']');
-    let parsed: Vec<RawLoreChange> = match (start, end) {
-        (Some(s), Some(e)) if e > s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(),
-        _ => Vec::new(),
+    // 宽容解析：优先对象（三段输出）；失败退回数组（旧格式纯变更），再不行当空（自动链路不报错）
+    let parsed: RawExtract = if let (Some(s), Some(e)) = (raw.find('{'), raw.rfind('}')) {
+        if e > s {
+            serde_json::from_str(&raw[s..=e]).unwrap_or_default()
+        } else {
+            RawExtract::default()
+        }
+    } else if let (Some(s), Some(e)) = (raw.find('['), raw.rfind(']')) {
+        let legacy: Vec<RawLoreChange> = if e > s {
+            serde_json::from_str(&raw[s..=e]).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        RawExtract {
+            changes: legacy,
+            ..Default::default()
+        }
+    } else {
+        RawExtract::default()
     };
-    const VALID_CATS: [&str; 6] = ["人物", "世界观", "地点", "物品", "伏笔", "其他"];
+    const VALID_CATS: [&str; 7] = ["人物", "世界观", "地点", "物品", "功法", "伏笔", "其他"];
     let rows: Vec<db::NewLoreChange> = parsed
+        .changes
         .into_iter()
         .filter_map(|r| {
             let title = r.entry_title?.trim().to_string();
@@ -1172,14 +1394,430 @@ async fn extract_chapter_lore_changes(
     let count = rows.len();
     db.replace_lore_changes(chapter.project_id, chapter_id, &rows)
         .map_err(|e| e.to_string())?;
-    Ok(count)
+
+    // 新实体登记入库（穷尽收集融入自动链路）：keywords=标题、非常驻，词条多不伤注入预算
+    let mut titles: Vec<String> = entries.iter().map(|e| e.title.trim().to_string()).collect();
+    let mut created = 0usize;
+    for ent in parsed.entities {
+        let title = match ent.title {
+            Some(t) => t.trim().to_string(),
+            None => continue,
+        };
+        if title.is_empty() || titles.iter().any(|t| *t == title) {
+            continue;
+        }
+        let category = ent.category.unwrap_or_default().trim().to_string();
+        let category = if VALID_CATS.contains(&category.as_str()) {
+            category
+        } else {
+            "其他".to_string()
+        };
+        let e = db
+            .create_lore_entry(chapter.project_id, &title, &category)
+            .map_err(|e| e.to_string())?;
+        db.update_lore_entry(&crate::db::LoreEntry {
+            content: ent.desc.unwrap_or_default().trim().to_string(),
+            keywords: title.clone(),
+            ..e
+        })
+        .map_err(|e| e.to_string())?;
+        titles.push(title);
+        created += 1;
+    }
+
+    // 关系入库（整章替换幂等）
+    let rels: Vec<db::NewLoreRelation> = parsed
+        .relations
+        .into_iter()
+        .filter_map(|r| {
+            let s = r.subject?.trim().to_string();
+            let o = r.object?.trim().to_string();
+            let p = r.predicate.unwrap_or_default().trim().to_string();
+            if s.is_empty() || o.is_empty() || p.is_empty() {
+                return None;
+            }
+            Some(db::NewLoreRelation {
+                subject: s,
+                predicate: p,
+                object: o,
+            })
+        })
+        .collect();
+    let _ = db.replace_lore_relations(chapter.project_id, chapter_id, &rels);
+    Ok(ExtractOutcome {
+        changes: count,
+        entities: created,
+        relations: rels.len(),
+    })
 }
 
-/// 手动提取某章的设定变更（台账视图「提取本章/补齐全部」按钮），返回变更条数
+/// 提取统计（批量写章收尾汇总进任务结果，用户可见设定库生长）
+#[derive(Default, Clone, Copy)]
+pub(crate) struct ExtractOutcome {
+    pub changes: usize,
+    pub entities: usize,
+    pub relations: usize,
+}
+
+impl ExtractOutcome {
+    fn is_empty(&self) -> bool {
+        self.changes == 0 && self.entities == 0 && self.relations == 0
+    }
+    fn summary(&self) -> String {
+        format!(
+            "变更 {} · 新词条 {} · 关系 {}",
+            self.changes, self.entities, self.relations
+        )
+    }
+}
+
+/// 手动提取某章的设定变更（台账视图「提取本章/补齐全部」按钮），返回三段统计说明
 #[tauri::command]
-pub async fn extract_lore_changes(db: State<'_, Db>, chapter_id: i64) -> Result<usize, String> {
+pub async fn extract_lore_changes(db: State<'_, Db>, chapter_id: i64) -> Result<String, String> {
     let cfg = load_llm_config(&db);
-    extract_chapter_lore_changes(&db, &cfg, chapter_id).await
+    let o = extract_chapter_lore_changes(&db, &cfg, chapter_id).await?;
+    Ok(if o.is_empty() {
+        "本章没有可提取的设定信息".to_string()
+    } else {
+        o.summary()
+    })
+}
+
+/// 按 id 或标题找设定词条（可变借用，活设定应用用）
+fn find_entry_mut<'a>(
+    entries: &'a mut [LoreEntry],
+    entry_id: Option<i64>,
+    title: &str,
+) -> Option<&'a mut LoreEntry> {
+    entries
+        .iter_mut()
+        .find(|e| Some(e.id) == entry_id || e.title.trim() == title.trim())
+}
+
+/// 应用台账变更到设定库（活设定，D31 重写式）：new→建词条；retire→停用；
+/// update→LLM 把词条重写成"当前状态"叙述（原始卡+变更序列→一段干净的现在时描述，批量一次调用），
+/// 重写前存快照（rollback_lore_apply 可回滚）。按章节顺序执行，应用过的不再重复；
+/// 重新提取某章会整章重置为未应用。手动触发 + 批量写章收尾自动跑（auto_apply_lore 默认开）
+#[tauri::command]
+pub async fn apply_lore_changes(db: State<'_, Db>, project_id: i64) -> Result<String, String> {
+    let cfg = load_llm_config(&db);
+    apply_lore_changes_core(&db, &cfg, project_id).await
+}
+
+/// apply 核心（命令与批量收尾共用）。LLM 重写失败时对 update 回退机械追加，不中断
+async fn apply_lore_changes_core(
+    db: &Db,
+    cfg: &LlmConfig,
+    project_id: i64,
+) -> Result<String, String> {
+    let pending = db
+        .list_unapplied_changes(project_id)
+        .map_err(|e| e.to_string())?;
+    if pending.is_empty() {
+        return Ok("没有待应用的变更".to_string());
+    }
+    let mut entries = db.list_lore_entries(project_id).map_err(|e| e.to_string())?;
+    let (mut created, mut retired, mut skipped) = (0, 0, 0);
+    let mut applied_ids: Vec<i64> = Vec::new();
+    // 待重写的词条：entry_id → 变更列表（章节序号 + 说明，时间正序）
+    let mut rewrite_map: std::collections::BTreeMap<i64, Vec<(i64, String)>> =
+        Default::default();
+
+    let create_entry = |db: &Db,
+                        entries: &mut Vec<LoreEntry>,
+                        title: &str,
+                        category: &str,
+                        content: String|
+     -> Result<(), String> {
+        let mut e = db
+            .create_lore_entry(project_id, title, category)
+            .map_err(|e| e.to_string())?;
+        e.content = content;
+        e.keywords = title.to_string();
+        db.update_lore_entry(&e).map_err(|e| e.to_string())?;
+        entries.push(e);
+        Ok(())
+    };
+
+    for c in &pending {
+        match c.kind.as_str() {
+            "retire" => match find_entry_mut(&mut entries, c.entry_id, &c.entry_title) {
+                Some(e) => {
+                    e.content = format!(
+                        "{}\n[第{}章退场/失效] {}",
+                        e.content.trim_end(),
+                        c.chapter_order,
+                        c.detail
+                    );
+                    e.enabled = false;
+                    db.update_lore_entry(e).map_err(|e| e.to_string())?;
+                    retired += 1;
+                }
+                None => skipped += 1,
+            },
+            "update" => match find_entry_mut(&mut entries, c.entry_id, &c.entry_title) {
+                Some(e) => {
+                    e.enabled = true; // 退场后又有新剧情：复活（重写时体现）
+                    rewrite_map
+                        .entry(e.id)
+                        .or_default()
+                        .push((c.chapter_order, c.detail.trim().to_string()));
+                }
+                None => {
+                    // 词条不存在：当新登场建（AI 提取时词条库还没有它）
+                    create_entry(
+                        db,
+                        &mut entries,
+                        &c.entry_title,
+                        &c.category,
+                        format!("（第{}章登场）{}", c.chapter_order, c.detail),
+                    )?;
+                    created += 1;
+                }
+            },
+            _ => {
+                // new：已有同名词条（含停用）不重复建，交给人工合并
+                if find_entry_mut(&mut entries, c.entry_id, &c.entry_title).is_some() {
+                    skipped += 1;
+                } else {
+                    create_entry(
+                        db,
+                        &mut entries,
+                        &c.entry_title,
+                        &c.category,
+                        format!("（第{}章登场）{}", c.chapter_order, c.detail),
+                    )?;
+                    created += 1;
+                }
+            }
+        }
+        applied_ids.push(c.id);
+    }
+
+    // update 批量重写：一次 LLM 调用把涉及的词条改成"当前状态"叙述（≤300字/词条）
+    let mut rewritten = 0usize;
+    if !rewrite_map.is_empty() {
+        let targets: Vec<&LoreEntry> = entries
+            .iter()
+            .filter(|e| rewrite_map.contains_key(&e.id))
+            .collect();
+        let material: String = targets
+            .iter()
+            .map(|e| {
+                let changes = rewrite_map
+                    .get(&e.id)
+                    .map(|cs| {
+                        cs.iter()
+                            .map(|(o, d)| format!("第{o}章：{d}"))
+                            .collect::<Vec<_>>()
+                            .join("；")
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "【{}】（现有内容）{}\n（本章起剧情变更）{}\n",
+                    e.title,
+                    e.content.trim(),
+                    changes
+                )
+            })
+            .collect();
+        let raw = llm::chat_once(
+            cfg.clone(),
+            vec![
+                (
+                    "system".to_string(),
+                    "你是设定库管理员，把若干设定词条重写成\"当前状态\"叙述：\
+                    合并现有内容与剧情变更，保留仍然成立的信息，过期状态改写为现状\
+                    （如\"左臂第38章被贯穿\"若已接回则写\"左臂曾贯穿、已接回但经脉受损\"），\
+                    删掉与现状矛盾的旧描述。每个词条 ≤300 字，保持客观设定口吻，不写流水账年份堆砌。\
+                    只输出 JSON 数组：[{\"title\": \"词条名\", \"content\": \"重写后内容\"}]，逐条对应输入，不要解释。"
+                        .to_string(),
+                ),
+                ("user".to_string(), material),
+            ],
+        )
+        .await;
+
+        // 先存快照（重写回滚依据）——无论 LLM 成败，本次应用涉及的词条都留底
+        let ts = db::now_ts();
+        db.snapshot_lore_entries(&targets, ts)
+            .map_err(|e| e.to_string())?;
+
+        match raw {
+            Ok(json) => {
+                #[derive(serde::Deserialize)]
+                struct Rewritten {
+                    title: String,
+                    content: String,
+                }
+                let start = json.find('[');
+                let end = json.rfind(']');
+                let list: Vec<Rewritten> = match (start, end) {
+                    (Some(s), Some(e)) if e > s => {
+                        serde_json::from_str(&json[s..=e]).unwrap_or_default()
+                    }
+                    _ => Vec::new(),
+                };
+                for r in list {
+                    if let Some(e) =
+                        find_entry_mut(&mut entries, None, r.title.trim())
+                    {
+                        if r.content.trim().is_empty() {
+                            continue;
+                        }
+                        e.content = r.content.trim().to_string();
+                        db.update_lore_entry(e).map_err(|e| e.to_string())?;
+                        rewritten += 1;
+                    }
+                }
+            }
+            Err(_) => {
+                // LLM 失败回退机械追加（快照已存，仍可回滚）
+                for (id, changes) in &rewrite_map {
+                    if let Some(e) = entries.iter_mut().find(|e| e.id == *id) {
+                        for (order, detail) in changes {
+                            e.content = format!(
+                                "{}\n[剧情更新·第{order}章] {detail}",
+                                e.content.trim_end()
+                            );
+                        }
+                        db.update_lore_entry(e).map_err(|e| e.to_string())?;
+                        rewritten += 1;
+                    }
+                }
+            }
+        }
+        let _ = rewritten;
+        db.mark_changes_applied(&applied_ids, ts)
+            .map_err(|e| e.to_string())?;
+    } else {
+        let ts = db::now_ts();
+        db.mark_changes_applied(&applied_ids, ts)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(format!(
+        "已应用 {} 条：新登场 {created} · 重写更新 {rewritten} · 退场 {retired}{}（重写前已快照，可回滚）",
+        pending.len(),
+        if skipped > 0 {
+            format!("（{skipped} 条已有同名词条，人工合并）")
+        } else {
+            String::new()
+        }
+    ))
+}
+
+/// 回滚最近一次应用：恢复词条快照 + 那批变更重置为未应用（重新提取/应用即重做）
+#[tauri::command]
+pub fn rollback_lore_apply(db: State<'_, Db>, project_id: i64) -> Result<String, String> {
+    let ts = db
+        .latest_apply_ts(project_id)
+        .map_err(|e| e.to_string())?;
+    if ts == 0 {
+        return Ok("还没有应用过变更".to_string());
+    }
+    let (restored, unapplied) = db
+        .rollback_lore_apply(project_id, ts)
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "已回滚上次应用：恢复 {restored} 个词条内容，{unapplied} 条变更回到待应用"
+    ))
+}
+
+/// 分层记忆参数：近期摘要保留章数 / 压缩粒度（每 50 章一段梗概）/ 每段梗概输入预算
+const RECENT_KEEP: usize = 15;
+const ERA_GROUP: i64 = 50;
+const ERA_INPUT_CHARS: usize = 6000;
+
+/// 压缩远期摘要（分层记忆）：保留最近 RECENT_KEEP 章 verbatim，更早的每 50 章压成 ≤200 字梗概，
+/// 存 era_summaries 供写作注入（build_memory_section）。已有完整覆盖同范围的段跳过（增量压缩），
+/// 范围长大后重算并替换旧段。体检页入口，长篇写到后期点一次即可
+#[tauri::command]
+pub async fn compress_era_summaries(
+    db: State<'_, Db>,
+    project_id: i64,
+    channel: Channel<ProgressEvent>,
+) -> Result<String, String> {
+    let cfg = load_llm_config(&db);
+    let all = db
+        .list_summaries_with_order(project_id)
+        .map_err(|e| e.to_string())?;
+    if all.len() <= RECENT_KEEP {
+        return Ok("章节还不多，暂不需要压缩远期摘要".to_string());
+    }
+    let old = &all[..all.len() - RECENT_KEEP];
+    // 按 50 章分桶（第 1~50、51~100 …；末桶按实际章数收口）
+    let mut buckets: std::collections::BTreeMap<i64, Vec<&(i64, String, String)>> =
+        std::collections::BTreeMap::new();
+    for row in old {
+        buckets
+            .entry((row.0 - 1) / ERA_GROUP)
+            .or_default()
+            .push(row);
+    }
+    let existing = db.list_era_summaries(project_id).map_err(|e| e.to_string())?;
+    let todo: Vec<(i64, i64, &Vec<&(i64, String, String)>)> = buckets
+        .iter()
+        .filter_map(|(b, rows)| {
+            let start = b * ERA_GROUP + 1;
+            let end = rows.last().map(|r| r.0).unwrap_or(start);
+            // 已有段完整覆盖本桶才跳过；书变长后范围扩大要重算
+            let covered = existing
+                .iter()
+                .any(|e| e.order_start <= start && e.order_end >= end);
+            if covered {
+                None
+            } else {
+                Some((start, end, rows))
+            }
+        })
+        .collect();
+    if todo.is_empty() {
+        return Ok("远期梗概已是最新".to_string());
+    }
+    let total = todo.len() as i64;
+    for (i, (start, end, rows)) in todo.iter().enumerate() {
+        let _ = channel.send(ProgressEvent::Progress {
+            current: i as i64,
+            total,
+            label: format!("压缩第 {start}~{end} 章"),
+        });
+        let joined = rows
+            .iter()
+            .map(|(o, t, s)| format!("第{o}章《{t}》{}", s.trim()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = llm::chat_once(
+            cfg.clone(),
+            vec![
+                (
+                    "system".to_string(),
+                    "你是网文责编，把一批章节摘要压缩成一段剧情梗概，供后续章节写作时当远期记忆。\
+                    只保留对后续剧情有影响的：主线推进、重要人物的登场/退场/重大状态变化、\
+                    关键物品与地图变化、未回收的重要伏笔。不超过 200 字，直接输出梗概正文，不要标题和解释。"
+                        .to_string(),
+                ),
+                (
+                    "user".to_string(),
+                    format!(
+                        "【章节摘要（第 {start}~{end} 章）】\n{}",
+                        head_chars(&joined, ERA_INPUT_CHARS)
+                    ),
+                ),
+            ],
+        )
+        .await
+        .map_err(|e| format!("压缩第 {start}~{end} 章失败: {e}"))?;
+        db.upsert_era_summary(project_id, *start, *end, text.trim())
+            .map_err(|e| e.to_string())?;
+    }
+    let _ = channel.send(ProgressEvent::Progress {
+        current: total,
+        total,
+        label: "完成".to_string(),
+    });
+    let _ = channel.send(ProgressEvent::Done);
+    Ok(format!("已压缩 {total} 段远期梗概（每段约 50 章，写作时自动注入）"))
 }
 
 /// 台账列表（entry_id/entry_title 给值时按条目过滤，条目时间线用）
@@ -1192,6 +1830,83 @@ pub fn list_lore_changes(
 ) -> Result<Vec<db::LoreChangeRow>, String> {
     db.list_lore_changes(project_id, entry_id, entry_title.as_deref())
         .map_err(|e| e.to_string())
+}
+
+// ---------- 对话占比统计（本地启发式，AI 味的结构性指标） ----------
+
+/// 引号内字符数（中英文引号/直角引号都认；AI 检测实测：对话段 AI 值显著低于大段描写）
+fn dialogue_chars(text: &str) -> usize {
+    let mut in_q = false;
+    let mut n = 0usize;
+    for c in text.chars() {
+        match c {
+            '“' | '「' => in_q = true,
+            '”' | '」' => in_q = false,
+            _ if in_q => n += 1,
+            _ => {}
+        }
+    }
+    n
+}
+
+#[derive(Debug, Serialize)]
+pub struct DialogueStat {
+    pub chapter_id: i64,
+    pub title: String,
+    pub words: i64,
+    /// 引号内字符占正文字符比例（0~1）
+    pub dialogue_ratio: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DialogueStats {
+    pub chapters: Vec<DialogueStat>,
+    /// 全书对话占比（0~1）
+    pub total_ratio: f64,
+}
+
+/// 分章对话占比：写作节奏的结构性体检——占比过低说明大段叙述/描写堆砌
+#[tauri::command]
+pub fn dialogue_stats(db: State<'_, Db>, project_id: i64) -> Result<DialogueStats, String> {
+    let metas = db.list_chapters(project_id).map_err(|e| e.to_string())?;
+    let bodies = db
+        .list_chapter_bodies(project_id)
+        .map_err(|e| e.to_string())?;
+    let mut chapters = Vec::new();
+    let (mut total_dlg, mut total_chars) = (0usize, 0usize);
+    for (m, (_, html)) in metas.iter().zip(bodies.iter()) {
+        let plain = db::html_to_text(html);
+        let chars = plain.chars().count();
+        if chars == 0 {
+            continue;
+        }
+        let dlg = dialogue_chars(&plain);
+        total_dlg += dlg;
+        total_chars += chars;
+        chapters.push(DialogueStat {
+            chapter_id: m.id,
+            title: m.title.clone(),
+            words: m.word_count,
+            dialogue_ratio: (dlg as f64 / chars as f64 * 1000.0).round() / 1000.0,
+        });
+    }
+    Ok(DialogueStats {
+        total_ratio: if total_chars == 0 {
+            0.0
+        } else {
+            (total_dlg as f64 / total_chars as f64 * 1000.0).round() / 1000.0
+        },
+        chapters,
+    })
+}
+
+/// 关系三元组列表（人物资产/反向查询，时间正序）
+#[tauri::command]
+pub fn list_lore_relations(
+    db: State<'_, Db>,
+    project_id: i64,
+) -> Result<Vec<db::LoreRelationRow>, String> {
+    db.list_lore_relations(project_id).map_err(|e| e.to_string())
 }
 
 /// 批量写章执行器（任务队列 kind = batch_chapters）。
@@ -1257,9 +1972,18 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         .flatten()
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(0);
+    // 去AI味二遍 pass（设置里配，开启后每章生成后自跑一遍去味，耗时与成本约 ×2）
+    let deslop = db
+        .get_setting("batch_deslop")
+        .ok()
+        .flatten()
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
 
     // 本次写成的章节（标题 + 摘要），供收尾时推进大纲
     let mut written: Vec<(String, String)> = Vec::new();
+    // 本批设定库生长统计（收尾进任务结果，用户可见）
+    let mut extract_total = ExtractOutcome::default();
     let mut cancelled = false;
 
     for i in 0..count {
@@ -1279,17 +2003,22 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
             .map(|c| tail_chars(&db::html_to_text(&c.content), CONTEXT_TAIL_CHARS))
             .unwrap_or_default();
 
-        // 设定注入：关键词匹配上下文 + 作品简介（第一章时上文为空，简介也能触发关键词）
+        // 设定注入（D31 注入时融合）：关键词匹配上下文 + 作品简介 + 各词条变更时间线
         let entries = db.list_lore_entries(project_id).unwrap_or_default();
         let lore_match_context = format!("{context_tail}\n{}", project.synopsis);
-        let (lore_section, _injected) = build_lore_section(&entries, &lore_match_context);
+        let ledger = db
+            .list_lore_changes(project_id, None, None)
+            .unwrap_or_default();
+        let (lore_section, _injected) =
+            build_lore_section(&entries, &lore_match_context, &ledger);
 
         // 前情摘要 + 大纲（与 ai_continue 同一套注入链）
         let next_order = prev.as_ref().map(|c| c.order_index + 1).unwrap_or(1);
         let summaries = db
             .list_summaries_before(project_id, next_order)
             .unwrap_or_default();
-        let summary_section = build_summary_section(&summaries);
+        let (summary_section, _era_count) =
+            build_memory_section(db, project_id, next_order, &summaries);
         let outline = db.list_outline(project_id).unwrap_or_default();
         let outline_counts = db.count_chapters_by_outline(project_id).unwrap_or_default();
         let outline_section = build_outline_section(&outline, &outline_counts);
@@ -1298,7 +2027,7 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         let mut system = if lore_section.is_empty() {
             SYSTEM_PROMPT.to_string()
         } else {
-            format!("{SYSTEM_PROMPT}\n\n【设定资料】（写作时必须严格遵守）\n{lore_section}")
+            format!("{SYSTEM_PROMPT}\n\n【设定资料】（写作时必须严格遵守，[剧情状态] 为当前状态）\n{lore_section}")
         };
         if let Some((_, section)) = &style {
             system.push_str("\n\n");
@@ -1307,7 +2036,7 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         let summary_block = if summary_section.is_empty() {
             String::new()
         } else {
-            format!("【前情摘要】\n{summary_section}\n\n")
+            format!("{summary_section}\n\n")
         };
         let outline_block = if outline_section.is_empty() {
             String::new()
@@ -1335,12 +2064,20 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
             章末停在变化发生的那一拍，留后劲。"
         );
 
-        let text = llm::chat_once(
+        let mut text = llm::chat_once(
             cfg.clone(),
             vec![("system".to_string(), system), ("user".to_string(), user)],
         )
         .await
         .map_err(|e| format!("《{title}》生成失败（已完成 {i} 章）: {e}"))?;
+
+        // 去AI味二遍 pass：失败回退原文，不中断批量流程
+        if deslop {
+            let _ = db.update_task_progress(task.id, i, count, &format!("{title} 去AI味…"));
+            if let Ok(t) = deslop_chapter_text(&cfg, &text).await {
+                text = t;
+            }
+        }
 
         let chapter = db
             .create_chapter(project_id, &title)
@@ -1355,8 +2092,12 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         if !summary.is_empty() {
             let _ = db.save_summary(chapter.id, &summary);
         }
-        // 顺带提取设定变更进台账（失败不中断批量流程）
-        let _ = extract_chapter_lore_changes(db, &cfg, chapter.id).await;
+        // 顺带提取设定变更/实体/关系进库（失败不中断批量流程，统计进收尾报告）
+        if let Ok(o) = extract_chapter_lore_changes(db, &cfg, chapter.id).await {
+            extract_total.changes += o.changes;
+            extract_total.entities += o.entities;
+            extract_total.relations += o.relations;
+        }
         written.push((chapter_title.clone(), summary));
 
         // 断点自检：每写满 interval 章暂停，AI 巡检本批章节后等用户决定继续/叫停
@@ -1375,6 +2116,20 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         }
     }
 
+    // 活设定自动应用（D31）：本批变更 LLM 重写进词条（默认开，设置 auto_apply_lore=0 关）
+    if !written.is_empty() {
+        let auto_apply = db
+            .get_setting("auto_apply_lore")
+            .ok()
+            .flatten()
+            .map(|v| v.trim() != "0")
+            .unwrap_or(true);
+        if auto_apply {
+            let _ = db.update_task_progress(task.id, written.len() as i64, count, "设定库更新…");
+            let _ = apply_lore_changes_core(db, &cfg, project_id).await;
+        }
+    }
+
     // 大纲自动推进：让 LLM 判断本次内容覆盖到第几个节点，标 done（失败静默跳过）
     if !written.is_empty() {
         let _ = db.update_task_progress(task.id, written.len() as i64, count, "推进大纲…");
@@ -1388,12 +2143,40 @@ pub(crate) async fn run_batch_chapters(db: &Db, task: &Task) -> Result<TaskEnd, 
         count,
         if cancelled { "已取消" } else { "完成" },
     );
-    let msg = format!("新增 {done_count} 章");
+    let msg = format!(
+        "新增 {done_count} 章{}",
+        if extract_total.is_empty() || cancelled {
+            String::new()
+        } else {
+            format!("｜设定库 +{} 词条 · {} 关系", extract_total.entities, extract_total.relations)
+        }
+    );
     if cancelled {
         Ok(TaskEnd::Cancelled(format!("{msg}（已取消）")))
     } else {
         Ok(TaskEnd::Done(msg))
     }
+}
+
+/// 去AI味 pass：整章正文去味改写（批量写章 batch_deslop=1 时逐章自跑，失败由调用方回退原文）
+async fn deslop_chapter_text(cfg: &LlmConfig, text: &str) -> Result<String, String> {
+    llm::chat_once(
+        cfg.clone(),
+        vec![
+            (
+                "system".to_string(),
+                "你是中文网文去AI味编辑，按六条硬约束逐条自查改写正文，只改味不改故事。\
+                直接输出改写后的正文，不要解释、不要标题。"
+                    .to_string(),
+            ),
+            (
+                "user".to_string(),
+                format!("{DESLOP_REQUIREMENT}\n\n【正文】\n{text}"),
+            ),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 断点巡检：责编视角检查刚写的一批章节（连贯/设定/节奏），200 字简报
@@ -1566,10 +2349,11 @@ const CHECK_SYSTEM_PROMPT: &str = "你是一位阅文无数、口味挑剔的资
 不要编造材料中不存在的情节；某段评注失败或材料明显不足时在对应小节明说，并降低评分置信度。\n\
 输出 Markdown，严格按以下结构分节（## 标题一字不差）：\n\
 ## 总分\nX.X/10 —— 一句定调短评\n\
-## 维度评分\n- 文笔：X.X/10 —— 一句依据\n- 节奏：X.X/10 —— 一句依据\n- 人物塑造：X.X/10 —— 一句依据\n- 情节逻辑：X.X/10 —— 一句依据\n- 吸引力：X.X/10 —— 一句依据（爽点/钩子/追读欲）\n\
+## 维度评分\n- 文笔：X.X/10 —— 一句依据\n- AI味：X.X/10 —— 一句依据（高频套话/句式套路/情绪不外化/结尾升华腔的密度，引用原句佐证）\n- 节奏：X.X/10 —— 一句依据\n- 人物塑造：X.X/10 —— 一句依据\n- 情节逻辑：X.X/10 —— 一句依据\n- 吸引力：X.X/10 —— 一句依据（爽点/钩子/追读欲）\n\
 ## 优点\n逐条列，每条带章节或情节依据\n\
 ## 缺点\n逐条列，每条带章节或情节依据；可以毒舌，但对文不对人\n\
-## 文笔评价\n以【全书评注】摘引的原句为据，评价语感/句式/用词/画面感/对话自然度，摘出典型亮点句或病句\n\
+## 文笔评价\n以【全书评注】摘引的原句为据，评价语感/句式/用词/画面感/对话自然度，摘出典型亮点句或病句；\
+评注【问题】栏记有数量/称谓硬伤的（数字对不上、称呼与关系不符），逐条点名列出\n\
 ## 风格与主题贴合度\n对照【作品信息】【写作风格要求】【大纲】：题材卖点是否兑现、风格是否走样、主线是否偏离大纲，偏在哪里\n\
 ## 总评\n一段话收拢：这本书在追更市场上的位置、目标读者、最该先改的一件事";
 
@@ -1577,7 +2361,8 @@ const CHECK_SYSTEM_PROMPT: &str = "你是一位阅文无数、口味挑剔的资
 const ANNOTATE_SYSTEM_PROMPT: &str = "你是一位资深网文读者，正在通读一部长篇连载并做读书笔记，供稍后写总评引用。\
 对给出的正文片段做评注（≤350 字），严格按四栏输出：\n\
 【精彩】文笔佳句/精彩片段/爽点：摘原句并说清好在哪；没有就写「无」\n\
-【问题】文笔毛病/逻辑漏洞/节奏拖沓/设定矛盾：引原句或情节；没有就写「无」\n\
+【问题】文笔毛病/逻辑漏洞/节奏拖沓/设定矛盾/数量称谓硬伤：引原句或情节；没有就写「无」\
+（数量称谓硬伤指：前文说“四个字/三个人/五天”，后文数字对不上；称呼与人物关系不符；代词指代错人——AI 生成文的典型指纹）\n\
 【贴合】正文与题材定位/写作风格要求的贴合观察（如走样、笔力不均）；没有可写的写「无」\n\
 【印象】本段一句话印象 + 阶段印象分 X.X/10\n\
 所有评价落到具体句子或情节，禁止「节奏紧凑引人入胜」这类套话；宁缺毋滥，不硬凑。";
@@ -1882,6 +2667,105 @@ pub fn save_check_report(
         .map_err(|e| e.to_string())
 }
 
+/// 评分报告 → 整改方案：LLM 按报告缺点/硬伤定位受影响章节、写跨章改写指令。
+/// 前端展示方案后用既有 enqueue_rewrite_chapters 一键入队（快照回滚链路复用）
+#[derive(Debug, serde::Serialize)]
+pub struct CheckFixPlan {
+    /// 给人看的方案说明（Markdown，3~6 条）
+    pub plan: String,
+    /// 给改写 AI 的完整指令
+    pub instruction: String,
+    /// 受影响章节（已解析为 id，按章节顺序）
+    pub chapter_ids: Vec<i64>,
+    pub chapter_titles: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn make_check_fix_plan(
+    db: State<'_, Db>,
+    project_id: i64,
+    report_id: i64,
+) -> Result<CheckFixPlan, String> {
+    let report = db
+        .get_check_report(report_id)
+        .map_err(|e| e.to_string())?;
+    let chapters = db.list_chapters(project_id).map_err(|e| e.to_string())?;
+    if chapters.is_empty() {
+        return Err("还没有章节，无法出整改方案".to_string());
+    }
+    let chapter_list = chapters
+        .iter()
+        .map(|c| format!("第{}章 {}", c.order_index, c.title))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let cfg = load_llm_config(&db);
+    let raw = llm::chat_once(
+        cfg,
+        vec![
+            (
+                "system".to_string(),
+                "你是网文责编，按一份总评报告制定整改方案。\
+                只整改报告里点名的实质问题（情节逻辑/设定矛盾/节奏/文笔硬伤/AI味），\
+                优点和风格特色不动。先输出方案说明（Markdown 列表，3~6 条：改什么、怎么改、\
+                预期提升哪个维度分），然后另起一行输出标记 [FIX]，后跟 JSON：\
+                {\"chapters\": [\"受影响章节名，从章节列表里原样选\"], \
+                \"instruction\": \"给执行改写的 AI 的完整指令：整改目标 + 每章要点 + \
+                保持不变的东西（主线/人设/风格），200字内\"}\
+                没有值得动章节的问题就输出空 chapters 数组。"
+                    .to_string(),
+            ),
+            (
+                "user".to_string(),
+                format!(
+                    "【总评报告】\n{}\n\n【章节列表】\n{}",
+                    head_chars(&report, 6000),
+                    chapter_list
+                ),
+            ),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let plan = match raw.find("[FIX]") {
+        Some(pos) => raw[..pos].trim().to_string(),
+        None => raw.trim().to_string(),
+    };
+    #[derive(serde::Deserialize)]
+    struct FixJson {
+        chapters: Vec<String>,
+        instruction: String,
+    }
+    let fix = raw
+        .find("[FIX]")
+        .and_then(|pos| raw[pos + 5..].find('{').map(|s| pos + 5 + s))
+        .and_then(|start| raw[start..].rfind('}').map(|e| (start, e)))
+        .and_then(|(s, e)| serde_json::from_str::<FixJson>(&raw[s..=e + 1]).ok())
+        .ok_or("整改方案解析失败，请重试")?;
+
+    // 章节名 → id（包含匹配，报告里的名字可能带卷名或简写）
+    let mut picked: Vec<&db::ChapterMeta> = chapters
+        .iter()
+        .filter(|c| {
+            fix.chapters.iter().any(|name| {
+                let n = name.trim();
+                !n.is_empty()
+                    && (c.title.contains(n)
+                        || n.contains(c.title.as_str())
+                        || n.contains(&format!("第{}章", c.order_index)))
+            })
+        })
+        .collect();
+    picked.sort_by_key(|c| c.order_index);
+    Ok(CheckFixPlan {
+        plan,
+        instruction: fix.instruction.trim().to_string(),
+        chapter_ids: picked.iter().map(|c| c.id).collect(),
+        chapter_titles: picked.iter().map(|c| c.title.clone()).collect(),
+    })
+}
+
 #[tauri::command]
 pub fn list_check_reports(
     db: State<'_, Db>,
@@ -2062,8 +2946,12 @@ const BOOTSTRAP_CHAT_SYSTEM: &str = "你是资深中文网文策划，深谙番�
 【出最终方案的格式】（严格遵守）\n\
 先输出一段话总结策划思路（卖点/故事引擎/前三章怎么抓人），然后另起一行输出标记 [DRAFT]，\
 标记后紧跟一个 JSON 对象：\
-{\"name\": \"书名（2~6字，有网感）\", \"description\": \"题材+一句话卖点，20字内\", \
-\"synopsis\": \"番茄风简介100~150字：第一句钩子、点出看点、结尾悬念\", \
+{\"name\": \"番茄风书名（2~8字，平台向：钩子直给、有网感、一眼知道卖点）\", \
+\"real_name\": \"真实书名（2~8字，有内涵：取核心意象/双关/点题不剧透，像正式出版的文学作品名，\
+耐琢磨——不许套《XX系统》《重生之XX》这类模板，也别和番茄风书名同义重复）\", \
+\"description\": \"题材+一句话卖点，20字内\", \"synopsis\": \"番茄风简介100~150字：第一句钩子、点出看点、结尾悬念；\
+去AI味：钩子落在具体反常事件/细节上，不落抽象大词；禁排比、禁「这不是X而是Y」、\
+禁「命运的齿轮」「一场关于XX的XX」类空话、不用仿佛/一丝/一抹等高频词\", \
 \"target_total_words\": 全书目标字数（数字）, \"target_chapter_words\": 每章字数（数字，网文一般 2000~3000）, \
 \"outline\": [{\"title\": \"阶段名（如：开局·立足异界 / 中期·文明碰撞）\", \"content\": \"这一步的阶段目标/主要冲突/阶段末局面变化，60字内\", \"target_chapters\": 本卷预估章数（整数）}…], \
 \"lore\": [{\"category\": \"人物/世界观/地点/物品/伏笔/其他\", \"title\": \"词条名\", \
@@ -2192,8 +3080,11 @@ pub async fn assistant_chat(
         .map(|m| m.content.as_str())
         .unwrap_or("");
     let entries = db.list_lore_entries(project_id).unwrap_or_default();
+    let ledger = db
+        .list_lore_changes(project_id, None, None)
+        .unwrap_or_default();
     let (lore_section, injected) =
-        build_lore_section(&entries, &format!("{last_user}\n{chapter_tail}"));
+        build_lore_section(&entries, &format!("{last_user}\n{chapter_tail}"), &ledger);
 
     // 全部章节摘要（体检同款预算）
     let summaries = db
@@ -2273,7 +3164,9 @@ pub async fn assistant_chat(
 
 const ASSISTANT_REWRITE_SYSTEM: &str = "你是中文网文编辑，按指令改写整章正文。\n\
 保持设定、视角、人称与文风一致；保持与前后章的剧情连贯（前后章摘要已给出，不得与之矛盾）。\n\
-语言硬要求：能用动作不用总结，能用对白不用解释，能写具体不写抽象；对白带身份感。\
+语言硬要求：能用动作不用总结，能用对白不用解释，能写具体不写抽象；对白带身份感。\n\
+去AI味硬约束：不用 仿佛/一丝/一抹/深吸一口气/眼中闪过/嘴角勾起/心中一动 等高频词；\
+不写三连排比与「不是A，而是B」；情绪用动作外化不直接命名；结尾不总结升华。\
 直接输出改写后的全章正文，不要章节标题、不要解释、不要元信息。";
 
 /// 单章改写：流式输出改写后的全文（前端预览确认后才落库）
@@ -2545,12 +3438,19 @@ pub struct ScanHit {
     pub context: String,
 }
 
+/// 扫描结果：命中清单 + 全书总字数（前端算 AI 味密度用）
+#[derive(Debug, Serialize)]
+pub struct ScanResult {
+    pub hits: Vec<ScanHit>,
+    pub total_words: i64,
+}
+
 #[tauri::command]
 pub fn scan_banned_words(
     db: State<'_, Db>,
     project_id: i64,
     words: Vec<String>,
-) -> Result<Vec<ScanHit>, String> {
+) -> Result<ScanResult, String> {
     let words: Vec<String> = words
         .into_iter()
         .map(|w| w.trim().to_string())
@@ -2565,8 +3465,10 @@ pub fn scan_banned_words(
     // 需要 chapter_id，改用 chapters 全量查询
     let metas = db.list_chapters(project_id).map_err(|e| e.to_string())?;
     let mut hits = Vec::new();
+    let mut total_words = 0i64;
     for (m, (_, content_html)) in metas.iter().zip(bodies.iter()) {
         let plain = db::html_to_text(content_html);
+        total_words += plain.chars().count() as i64;
         let chars: Vec<char> = plain.chars().collect();
         for w in &words {
             let mut from = 0usize;
@@ -2584,13 +3486,13 @@ pub fn scan_banned_words(
                     context: format!("…{}…", ctx.replace('\n', " ")),
                 });
                 if hits.len() >= 200 {
-                    return Ok(hits); // 防爆：最多 200 条
+                    return Ok(ScanResult { hits, total_words }); // 防爆：最多 200 条
                 }
                 from = abs + w.len();
             }
         }
     }
-    Ok(hits)
+    Ok(ScanResult { hits, total_words })
 }
 
 const COLLECT_LORE_SYSTEM: &str = "你是小说设定整理员。通读章节梗概，搜集对创作和视觉化有用的设定条目：
@@ -2715,4 +3617,51 @@ pub async fn collect_lore_entries(db: State<'_, Db>, project_id: i64) -> Result<
         .collect::<Vec<_>>()
         .join(" ");
     Ok(format!("新搜集 {created} 条：{breakdown}"))
+}
+
+/// 穷尽式设定收集：逐章跑三段提取（变更 + 实体 + 关系），一次补齐整本书的设定图鉴、
+/// 关系网络与台账——W2 提取升级后与「补齐全部章节」同源，这里做成带进度的一键全书版。
+/// 新词条 keywords=标题非常驻（词条多不伤注入预算）；已有词条不动，关系/台账整章替换幂等
+#[tauri::command]
+pub async fn collect_lore_exhaustive(
+    db: State<'_, Db>,
+    project_id: i64,
+    channel: Channel<ProgressEvent>,
+) -> Result<String, String> {
+    let cfg = load_llm_config(&db);
+    let metas = db.list_chapters(project_id).map_err(|e| e.to_string())?;
+    let targets: Vec<&db::ChapterMeta> = metas
+        .iter()
+        .filter(|m| m.word_count > 0)
+        .collect();
+    if targets.is_empty() {
+        return Err("还没有正文内容，先写几章再来搜集".to_string());
+    }
+
+    let total = targets.len() as i64;
+    let mut sum = ExtractOutcome::default();
+    for (i, m) in targets.iter().enumerate() {
+        let _ = channel.send(ProgressEvent::Progress {
+            current: i as i64 + 1,
+            total,
+            label: format!(
+                "{}（词条 +{} · 关系 +{}）",
+                m.title, sum.entities, sum.relations
+            ),
+        });
+        // 复用三段提取（与写章后的自动链路同一份 prompt，结果一致）：单章失败跳过不中断
+        match extract_chapter_lore_changes(&db, &cfg, m.id).await {
+            Ok(o) => {
+                sum.changes += o.changes;
+                sum.entities += o.entities;
+                sum.relations += o.relations;
+            }
+            Err(e) => eprintln!("《{}》穷尽收集失败（继续下一章）: {e}", m.title),
+        }
+    }
+    let _ = channel.send(ProgressEvent::Done);
+    Ok(format!(
+        "全书扫描 {} 章完成：新增词条 {} · 关系 {} · 变更 {}（变更在台账页可应用到设定库）",
+        total, sum.entities, sum.relations, sum.changes
+    ))
 }

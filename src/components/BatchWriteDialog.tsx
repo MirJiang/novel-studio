@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../lib/api";
 import type { ChapterMeta, Project, Task } from "../types";
 
 export interface BatchStartOptions {
@@ -57,6 +58,25 @@ export function BatchWriteDialog({
     project.target_chapter_words > 0 ? String(project.target_chapter_words) : "2000"
   );
   const [count, setCount] = useState("3");
+  /** 每章生成后自跑去AI味 pass（设置 batch_deslop 持久化，全作品生效） */
+  const [deslop, setDeslop] = useState(false);
+  /** 批量收尾自动应用设定变更（LLM 重写词条为当前状态，默认开） */
+  const [autoApply, setAutoApply] = useState(true);
+
+  useEffect(() => {
+    void api.getSetting("batch_deslop").then((v) => setDeslop(v === "1"));
+    void api.getSetting("auto_apply_lore").then((v) => setAutoApply(v !== "0"));
+  }, []);
+
+  const toggleDeslop = (on: boolean) => {
+    setDeslop(on);
+    void api.setSetting("batch_deslop", on ? "1" : "0");
+  };
+
+  const toggleAutoApply = (on: boolean) => {
+    setAutoApply(on);
+    void api.setSetting("auto_apply_lore", on ? "1" : "0");
+  };
 
   const running = batch != null;
   const queued = batch?.status === "pending";
@@ -135,6 +155,34 @@ export function BatchWriteDialog({
           />
         </div>
 
+        {/* 去AI味二遍 pass 开关（D29）+ 活设定自动应用（D31） */}
+        <label
+          className={`mt-2 flex items-center gap-2 text-xs text-muted ${
+            running ? "pointer-events-none opacity-50" : ""
+          }`}
+        >
+          <input
+            type="checkbox"
+            className="accent-[var(--color-accent)]"
+            checked={deslop}
+            onChange={(e) => toggleDeslop(e.target.checked)}
+          />
+          每章写完自动去AI味（只改味不改情节，耗时与成本约 ×2）
+        </label>
+        <label
+          className={`mt-1.5 flex items-center gap-2 text-xs text-muted ${
+            running ? "pointer-events-none opacity-50" : ""
+          }`}
+        >
+          <input
+            type="checkbox"
+            className="accent-[var(--color-accent)]"
+            checked={autoApply}
+            onChange={(e) => toggleAutoApply(e.target.checked)}
+          />
+          收尾自动应用设定变更（词条重写为当前状态，可回滚）
+        </label>
+
         {batch && (
           <div className="mt-4">
             <div className="flex justify-between text-xs text-muted">
@@ -199,13 +247,13 @@ export function BatchWriteDialog({
           <p className="mt-2 text-[11px] leading-4 text-faint">
             本次任务：按章数 = {Math.max(parseWords(count) || 1, 1)} 章 ·{" "}
             {(((Math.max(parseWords(count) || 1, 1)) * wpc) / 10000).toFixed(1)} 万字 ·{" "}
-            {fmtDuration(Math.max(parseWords(count) || 1, 1))}
+            {fmtDuration(Math.max(parseWords(count) || 1, 1) * (deslop ? 2 : 1))}
             {target > 0 && remainingChapters > 0 && (
               <>
                 <br />
                 写完整本书 = {remainingChapters} 章 ·{" "}
                 {((remainingChapters * wpc) / 10000).toFixed(1)} 万字 ·{" "}
-                {fmtDuration(remainingChapters)}
+                {fmtDuration(remainingChapters * (deslop ? 2 : 1))}
               </>
             )}
           </p>

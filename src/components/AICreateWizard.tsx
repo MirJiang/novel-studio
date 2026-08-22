@@ -65,6 +65,8 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
   const [draft, setDraft] = useState<BootstrapDraft | null>(null);
   const [draftTab, setDraftTab] = useState<DraftTab>("base");
   const [draftGenerating, setDraftGenerating] = useState(false); // [DRAFT] 已出现，JSON 生成中
+  /** 建书用哪个书名：番茄风（默认，平台向） / 真实书名（有内涵） */
+  const [namePick, setNamePick] = useState<"fanqie" | "real">("fanqie");
   const [styles, setStyles] = useState<Style[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [history, setHistory] = useState<ChatSession[] | null>(null);
@@ -403,14 +405,58 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
                 </div>
               ) : draftTab === "base" ? (
                 <div className="flex flex-col gap-3">
-                  <label className="block">
-                    <span className="mb-1 block text-xs text-muted">书名</span>
-                    <input
-                      className="w-full rounded-[10px] bg-canvas px-3 py-2 text-sm font-semibold text-ink outline-none focus:bg-surface2"
-                      value={draft.name}
-                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                    />
-                  </label>
+                  <div>
+                    <span className="mb-1 block text-xs text-muted">
+                      书名（点选建书用哪个，两个都可改）
+                    </span>
+                    <div className="flex flex-col gap-2">
+                      <label
+                        className={`flex items-center gap-2 rounded-[10px] px-3 py-2 transition-colors ${
+                          namePick === "fanqie" ? "bg-accent-soft" : "bg-canvas"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          className="accent-[var(--color-accent)]"
+                          checked={namePick === "fanqie"}
+                          onChange={() => setNamePick("fanqie")}
+                        />
+                        <span className="w-14 shrink-0 text-[11px] text-muted">
+                          番茄风
+                        </span>
+                        <input
+                          className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-ink outline-none placeholder:text-faint"
+                          placeholder="平台向：钩子直给、有网感"
+                          value={draft.name}
+                          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                        />
+                      </label>
+                      <label
+                        className={`flex items-center gap-2 rounded-[10px] px-3 py-2 transition-colors ${
+                          namePick === "real" ? "bg-accent-soft" : "bg-canvas"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          className="accent-[var(--color-accent)]"
+                          checked={namePick === "real"}
+                          disabled={!draft.real_name}
+                          onChange={() => setNamePick("real")}
+                        />
+                        <span className="w-14 shrink-0 text-[11px] text-muted">
+                          真实书名
+                        </span>
+                        <input
+                          className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-ink outline-none placeholder:text-faint"
+                          placeholder="有内涵：意象/双关/点题不剧透"
+                          value={draft.real_name ?? ""}
+                          onChange={(e) =>
+                            setDraft({ ...draft, real_name: e.target.value })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
                   <label className="block">
                     <span className="mb-1 block text-xs text-muted">题材标签</span>
                     <input
@@ -577,7 +623,14 @@ export function AICreateWizard({ onCancel, onCreate, startFresh, onFreshConsumed
               <div className="flex shrink-0 items-center gap-3 border-t border-line p-4">
                 <button
                   className="rounded-full bg-accent px-5 py-2 text-[13px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h"
-                  onClick={() => onCreate(draft)}
+                  onClick={() => {
+                    // 选「真实书名」时换 name（建书用），另一个名字保留在 real_name 不丢
+                    if (namePick === "real" && draft.real_name?.trim()) {
+                      onCreate({ ...draft, real_name: draft.name, name: draft.real_name.trim() });
+                    } else {
+                      onCreate(draft);
+                    }
+                  }}
                 >
                   创建作品
                 </button>

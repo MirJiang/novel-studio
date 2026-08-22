@@ -16,6 +16,27 @@ const FONTS: Record<string, string> = {
 /** 给设置页预览卡片用 */
 export const FONT_STACKS = FONTS;
 
+/** 字体选项（设置页/写作页共用）：key → 中文名 */
+export const FONT_OPTIONS: [string, string][] = [
+  ["serif", "宋体"],
+  ["sans", "黑体"],
+  ["kai", "楷体"],
+];
+
+/** 写作页快捷调整：写设置 + 立即改 CSS 变量（与设置页同一份键，双向同步） */
+export async function setEditorFont(key: string) {
+  await api.setSetting("editor_font", key);
+  document.documentElement.style.setProperty(
+    "--editor-font",
+    FONTS[key] ?? FONTS.serif
+  );
+}
+
+export async function setEditorFontSize(px: number) {
+  await api.setSetting("editor_font_size", String(px));
+  document.documentElement.style.setProperty("--editor-font-size", `${px}px`);
+}
+
 let mediaHooked = false;
 
 export async function applyUiPrefs() {

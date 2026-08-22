@@ -237,7 +237,8 @@ function ChapterList(props: SidebarProps) {
       {props.outlineItems.map((o, i) => {
         const rows = byVolume.get(o.id) ?? [];
         const chip =
-          o.status === "done" ? "已完成" : i === currentIdx ? "进行中" : null;
+          // 第一个未完成卷的标记叫「当前卷」——不叫「进行中」，会和任务状态混淆
+          o.status === "done" ? "已完成" : i === currentIdx ? "当前卷" : null;
         const countText =
           o.target_chapters > 0
             ? `${rows.length}/约${o.target_chapters} 章`

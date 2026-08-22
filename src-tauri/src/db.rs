@@ -194,6 +194,33 @@ pub struct LoreChangeRow {
     pub kind: String,
     pub detail: String,
     pub created_at: i64,
+    /// 应用到设定库的时间（0 = 待应用，活设定）
+    pub applied_at: i64,
+}
+
+/// 远期梗概（era_summaries 行）：一段 50 章的压缩剧情记忆
+#[derive(Debug, Serialize, Clone)]
+pub struct EraSummary {
+    pub order_start: i64,
+    pub order_end: i64,
+    pub text: String,
+}
+
+/// 关系三元组行（联章节序号，时间正序可查）
+#[derive(Debug, Serialize, Clone)]
+pub struct LoreRelationRow {
+    pub chapter_id: i64,
+    pub chapter_order: i64,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+}
+
+/// 待写入的关系
+pub struct NewLoreRelation {
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
 }
 
 /// AI 起书的会话归档
@@ -238,6 +265,11 @@ pub struct Task {
 #[derive(Clone)]
 pub struct Db {
     conn: std::sync::Arc<Mutex<Connection>>,
+}
+
+/// 毫秒时间戳（apply 流程公开：快照与应用标记共用同一 ts，回滚按它定位）
+pub fn now_ts() -> i64 {
+    now()
 }
 
 fn now() -> i64 {
@@ -567,6 +599,53 @@ impl Db {
             }
         }
         conn.pragma_update(None, "user_version", 20)?;
+        // v21：记忆与活设定——台账变更可应用到设定库（applied_at 标记已应用）；
+        // 远期摘要分层压缩（era_summaries：每 50 章一段梗概，写作时与近期摘要一起注入）
+        if version < 21 {
+            conn.execute_batch(
+                "ALTER TABLE lore_changes ADD COLUMN applied_at INTEGER NOT NULL DEFAULT 0;
+                 CREATE TABLE IF NOT EXISTS era_summaries (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                     order_start INTEGER NOT NULL,
+                     order_end INTEGER NOT NULL,
+                     text TEXT NOT NULL DEFAULT '',
+                     created_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_era_summaries_project
+                     ON era_summaries(project_id, order_start);",
+            )
+            .context("迁移 v21 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 21)?;
+        // v22：LLM Wiki 化（D31）——关系三元组（lore_relations，人物资产/反向查询）+
+        // 词条快照（lore_backups，重写式 apply 的回滚依据）
+        if version < 22 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS lore_relations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                     chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+                     subject TEXT NOT NULL DEFAULT '',
+                     predicate TEXT NOT NULL DEFAULT '',
+                     object TEXT NOT NULL DEFAULT '',
+                     created_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_lore_relations_project
+                     ON lore_relations(project_id, chapter_id);
+                 CREATE TABLE IF NOT EXISTS lore_backups (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                     entry_id INTEGER NOT NULL REFERENCES lore_entries(id) ON DELETE CASCADE,
+                     content TEXT NOT NULL DEFAULT '',
+                     created_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_lore_backups_entry
+                     ON lore_backups(entry_id, created_at);",
+            )
+            .context("迁移 v22 失败")?;
+        }
+        conn.pragma_update(None, "user_version", 22)?;
         Ok(())
     }
 
@@ -1644,12 +1723,12 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let filter_entry = entry_id.is_some() || entry_title.is_some();
         let sql = if filter_entry {
-            "SELECT c.id, c.chapter_id, ch.title, ch.order_index, c.entry_id, c.entry_title, c.category, c.kind, c.detail, c.created_at
+            "SELECT c.id, c.chapter_id, ch.title, ch.order_index, c.entry_id, c.entry_title, c.category, c.kind, c.detail, c.created_at, c.applied_at
              FROM lore_changes c JOIN chapters ch ON ch.id = c.chapter_id
              WHERE c.project_id = ?1 AND (c.entry_id = ?2 OR c.entry_title = ?3)
              ORDER BY ch.order_index DESC, c.id DESC"
         } else {
-            "SELECT c.id, c.chapter_id, ch.title, ch.order_index, c.entry_id, c.entry_title, c.category, c.kind, c.detail, c.created_at
+            "SELECT c.id, c.chapter_id, ch.title, ch.order_index, c.entry_id, c.entry_title, c.category, c.kind, c.detail, c.created_at, c.applied_at
              FROM lore_changes c JOIN chapters ch ON ch.id = c.chapter_id
              WHERE c.project_id = ?1
              ORDER BY ch.order_index DESC, c.id DESC"
@@ -1667,6 +1746,7 @@ impl Db {
                 kind: r.get(7)?,
                 detail: r.get(8)?,
                 created_at: r.get(9)?,
+                applied_at: r.get(10)?,
             })
         };
         let rows = if filter_entry {
@@ -1680,6 +1760,199 @@ impl Db {
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
         Ok(rows)
+    }
+
+    /// 待应用变更（按章节顺序正序——活设定按剧情顺序执行才正确）
+    pub fn list_unapplied_changes(&self, project_id: i64) -> Result<Vec<LoreChangeRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.chapter_id, ch.title, ch.order_index, c.entry_id, c.entry_title, c.category, c.kind, c.detail, c.created_at, c.applied_at
+             FROM lore_changes c JOIN chapters ch ON ch.id = c.chapter_id
+             WHERE c.project_id = ?1 AND c.applied_at = 0
+             ORDER BY ch.order_index ASC, c.id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![project_id], |r| {
+                Ok(LoreChangeRow {
+                    id: r.get(0)?,
+                    chapter_id: r.get(1)?,
+                    chapter_title: r.get(2)?,
+                    chapter_order: r.get(3)?,
+                    entry_id: r.get(4)?,
+                    entry_title: r.get(5)?,
+                    category: r.get(6)?,
+                    kind: r.get(7)?,
+                    detail: r.get(8)?,
+                    created_at: r.get(9)?,
+                    applied_at: r.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 标记变更已应用到设定库（ts 由调用方给，与快照共用同一时间戳——回滚按它定位）
+    pub fn mark_changes_applied(&self, ids: &[i64], ts: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        for id in ids {
+            conn.execute(
+                "UPDATE lore_changes SET applied_at = ?2 WHERE id = ?1",
+                params![id, ts],
+            )?;
+        }
+        Ok(())
+    }
+
+    // ---------- 关系三元组（D31 LLM Wiki） ----------
+
+    /// 整章替换该章的关系记录（重复提取幂等：先删后插，同台账）
+    pub fn replace_lore_relations(
+        &self,
+        project_id: i64,
+        chapter_id: i64,
+        rows: &[NewLoreRelation],
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM lore_relations WHERE chapter_id = ?1",
+            params![chapter_id],
+        )?;
+        let ts = now();
+        for r in rows {
+            conn.execute(
+                "INSERT INTO lore_relations (project_id, chapter_id, subject, predicate, object, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![project_id, chapter_id, r.subject, r.predicate, r.object, ts],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 全部关系（联章节序号，时间正序）
+    pub fn list_lore_relations(&self, project_id: i64) -> Result<Vec<LoreRelationRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT r.chapter_id, ch.order_index, r.subject, r.predicate, r.object
+             FROM lore_relations r JOIN chapters ch ON ch.id = r.chapter_id
+             WHERE r.project_id = ?1
+             ORDER BY ch.order_index ASC, r.id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![project_id], |r| {
+                Ok(LoreRelationRow {
+                    chapter_id: r.get(0)?,
+                    chapter_order: r.get(1)?,
+                    subject: r.get(2)?,
+                    predicate: r.get(3)?,
+                    object: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    // ---------- 词条快照（重写式 apply 的回滚依据） ----------
+
+    /// 重写前存词条内容快照（ts 与 mark_changes_applied 共用，回滚按它定位）
+    pub fn snapshot_lore_entries(&self, entries: &[&LoreEntry], ts: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        for e in entries {
+            conn.execute(
+                "INSERT INTO lore_backups (project_id, entry_id, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![e.project_id, e.id, e.content, ts],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 最近一次应用的时间戳（0 = 从未应用过）
+    pub fn latest_apply_ts(&self, project_id: i64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT MAX(applied_at) FROM lore_changes WHERE project_id = ?1 AND applied_at > 0",
+            params![project_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )?
+        .unwrap_or(0))
+    }
+
+    /// 回滚一次应用：恢复该时间戳的词条快照 + 把那批变更重置为未应用。返回 (恢复词条数, 重置变更数)
+    pub fn rollback_lore_apply(&self, project_id: i64, ts: i64) -> Result<(usize, usize)> {
+        let conn = self.conn.lock().unwrap();
+        // 每个词条取该时间戳下的快照（理论上一条，防御性取最新）
+        let restored = conn.execute(
+            "UPDATE lore_entries SET content = (
+                 SELECT b.content FROM lore_backups b
+                 WHERE b.entry_id = lore_entries.id AND b.created_at = ?2
+                 ORDER BY b.id DESC LIMIT 1
+             )
+             WHERE project_id = ?1 AND id IN (
+                 SELECT entry_id FROM lore_backups WHERE project_id = ?1 AND created_at = ?2
+             )",
+            params![project_id, ts],
+        )?;
+        let unapplied = conn.execute(
+            "UPDATE lore_changes SET applied_at = 0 WHERE project_id = ?1 AND applied_at = ?2",
+            params![project_id, ts],
+        )?;
+        Ok((restored, unapplied))
+    }
+
+    // ---------- 远期梗概（分层记忆） ----------
+
+    pub fn list_era_summaries(&self, project_id: i64) -> Result<Vec<EraSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT order_start, order_end, text FROM era_summaries
+             WHERE project_id = ?1 ORDER BY order_start ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![project_id], |r| {
+                Ok(EraSummary {
+                    order_start: r.get(0)?,
+                    order_end: r.get(1)?,
+                    text: r.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 写入一段梗概，先删掉与 [start,end] 有重叠的旧段（书变长后重算覆盖范围）
+    pub fn upsert_era_summary(
+        &self,
+        project_id: i64,
+        order_start: i64,
+        order_end: i64,
+        text: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM era_summaries
+             WHERE project_id = ?1 AND order_start < ?3 AND order_end > ?2",
+            params![project_id, order_start, order_end],
+        )?;
+        conn.execute(
+            "INSERT INTO era_summaries (project_id, order_start, order_end, text, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![project_id, order_start, order_end, text, now()],
+        )?;
+        Ok(())
+    }
+
+    /// 全部章节摘要带序号（压缩远期梗概用）：(order_index, title, summary)
+    pub fn list_summaries_with_order(&self, project_id: i64) -> Result<Vec<(i64, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT order_index, title, summary FROM chapters
+             WHERE project_id = ?1 AND summary != ''
+             ORDER BY order_index ASC",
+        )?;
+        let rows = stmt.query_map(params![project_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn list_styles(&self) -> Result<Vec<Style>> {
@@ -2029,7 +2302,8 @@ mod tests {
     use super::*;
 
     /// v20 迁移：旧六节内置卡刷新为纯文笔五节版；用户卡与新格式卡不动。
-    /// 手工搭一个 user_version=19 的最小库（只有 styles 表），重开触发 v20 块
+    /// 手工搭一个 user_version=19 的最小库（styles + v17 后就该存在的 lore_changes），
+    /// 重开触发 v20/v21 块
     #[test]
     fn migrates_v20_builtin_styles() {
         let path = std::env::temp_dir().join(format!(
@@ -2050,6 +2324,17 @@ mod tests {
                     kind TEXT NOT NULL DEFAULT 'text',
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE lore_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    chapter_id INTEGER NOT NULL,
+                    entry_id INTEGER,
+                    entry_title TEXT NOT NULL DEFAULT '',
+                    category TEXT NOT NULL DEFAULT '其他',
+                    kind TEXT NOT NULL DEFAULT 'update',
+                    detail TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
                 );
                 PRAGMA user_version = 19;",
             )

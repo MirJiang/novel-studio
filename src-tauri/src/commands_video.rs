@@ -180,9 +180,12 @@ pub async fn generate_narration(
         return Err("取材章节还没有内容".to_string());
     }
 
-    // 设定注入（红线：任何 AI 输出都过设定库）
+    // 设定注入（红线：任何 AI 输出都过设定库；D31 注入时融合带剧情状态）
     let entries = db.list_lore_entries(video.project_id).unwrap_or_default();
-    let (lore_section, injected) = build_lore_section(&entries, &source);
+    let ledger = db
+        .list_lore_changes(video.project_id, None, None)
+        .unwrap_or_default();
+    let (lore_section, injected) = build_lore_section(&entries, &source, &ledger);
     let _ = channel.send(StreamEvent::Meta {
         note: if injected.is_empty() {
             "未注入设定".to_string()
@@ -272,9 +275,12 @@ pub async fn generate_storyboard(db: State<'_, Db>, video_id: i64) -> Result<Vid
         return Err("请先生成（或填写）口播稿".to_string());
     }
 
-    // 人物设定注入，让提示词带上角色外貌
+    // 人物设定注入，让提示词带上角色外貌（含剧情状态，外貌变化如断臂要跟得上）
     let entries = db.list_lore_entries(video.project_id).unwrap_or_default();
-    let (lore_section, _) = build_lore_section(&entries, &video.narration);
+    let ledger = db
+        .list_lore_changes(video.project_id, None, None)
+        .unwrap_or_default();
+    let (lore_section, _) = build_lore_section(&entries, &video.narration, &ledger);
     let lore_block = if lore_section.is_empty() {
         String::new()
     } else {

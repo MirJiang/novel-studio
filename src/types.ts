@@ -74,6 +74,7 @@ export const LORE_CATEGORIES = [
   "世界观",
   "地点",
   "物品",
+  "功法",
   "伏笔",
   "其他",
 ] as const;
@@ -89,7 +90,10 @@ export interface BootstrapLore {
 
 /** AI 起书草稿 */
 export interface BootstrapDraft {
+  /** 番茄风书名（平台向：钩子直给、有网感）——建书默认用它 */
   name: string;
+  /** 真实书名（有内涵：意象/双关/点题不剧透，正式作品向）——建书可选用 */
+  real_name?: string;
   description: string;
   /** 番茄风长简介 */
   synopsis: string;
@@ -126,6 +130,22 @@ export interface ScanHit {
   context: string;
 }
 
+/** 合规/AI味扫描结果：命中清单 + 全书总字数（算密度用） */
+export interface ScanResult {
+  hits: ScanHit[];
+  total_words: number;
+}
+
+/** 评分报告 → AI 整改方案 */
+export interface CheckFixPlan {
+  /** 给人看的方案说明（Markdown） */
+  plan: string;
+  /** 给改写 AI 的完整指令 */
+  instruction: string;
+  chapter_ids: number[];
+  chapter_titles: string[];
+}
+
 /** 会话归档（起书向导 bootstrap / 风格对话 style 共用） */
 export interface ChatSession {
   id: number;
@@ -154,6 +174,31 @@ export interface LoreChange {
   kind: "new" | "update" | "retire";
   detail: string;
   created_at: number;
+  /** 应用到设定库的时间（0 = 待应用，活设定） */
+  applied_at: number;
+}
+
+/** 关系三元组（人物-物品/人物-人物，D31 LLM Wiki） */
+export interface LoreRelation {
+  chapter_id: number;
+  chapter_order: number;
+  subject: string;
+  predicate: string;
+  object: string;
+}
+
+/** 分章对话占比（本地启发式，写作节奏的结构性指标） */
+export interface DialogueStat {
+  chapter_id: number;
+  title: string;
+  words: number;
+  /** 引号内字符占正文比例（0~1） */
+  dialogue_ratio: number;
+}
+
+export interface DialogueStats {
+  chapters: DialogueStat[];
+  total_ratio: number;
 }
 
 /** 番茄在线搜书结果 */
@@ -166,12 +211,10 @@ export interface FqBook {
   abstract: string;
 }
 
-/** 番茄蒸馏样本（前几章正文，供风格蒸馏） */
-export interface FqSample {
+/** 番茄在线蒸馏结果（全文留在后端，不回传） */
+export interface FqDistillResult {
   name: string;
-  author: string;
   chars: number;
-  text: string;
 }
 
 /** 大纲节点（分卷/情节节点） */

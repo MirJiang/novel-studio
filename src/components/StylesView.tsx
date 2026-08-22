@@ -97,6 +97,7 @@ export function StylesView({
   /** 正在确认样本字数的书（行内展开确认条） */
   const [fqPickId, setFqPickId] = useState<string | null>(null);
   const [fqChars, setFqChars] = useState(15000); // 蒸馏样本目标字数
+  const [fqWhole, setFqWhole] = useState(false); // 全本（整本抓取，头/中/尾取样覆盖全书）
 
   /** 风格详情弹层（点卡片打开） */
   const [detail, setDetail] = useState<Style | null>(null);
@@ -441,31 +442,30 @@ export function StylesView({
     }
   };
 
-  /** 直接蒸馏：按自选字数抓样本 → 走既有蒸馏管线入库 */
-  const fqDistill = async (b: FqBook, maxChars: number) => {
+  /** 直接蒸馏：自选字数或全本抓样本 → 后端直接蒸馏入库（全文不进前端） */
+  const fqDistill = async (b: FqBook, maxChars: number | null) => {
     if (fqAction) return;
     setError(null);
     setFqInfo(null);
     setFqPickId(null);
     setFqAction(
-      `正在抓《${b.name}》样本（目标 ${maxChars.toLocaleString()} 字，样本越大抓取越久）…`
+      maxChars == null
+        ? `正在抓《${b.name}》全本（整本抓完约需几分钟，请留意进度）…`
+        : `正在抓《${b.name}》样本（目标 ${maxChars.toLocaleString()} 字）…`
     );
     try {
-      const sample = await api.fqDistillSample(b.book_id, maxChars);
-      setFqAction(`样本 ${sample.chars.toLocaleString()} 字，蒸馏中…`);
-      await api.distillStyle(
-        sample.name,
-        `番茄《${sample.name}》${sample.author}（在线样本）`,
-        sample.text
-      );
+      const r = await api.fqDistill(b.book_id, maxChars, (ev) => {
+        if (ev.type === "progress") setFqProgress(ev.label);
+      });
       setFqInfo(
-        `《${sample.name}》已蒸馏入库（样本 ${sample.chars.toLocaleString()} 字）`
+        `《${r.name}》已蒸馏入库（样本 ${r.chars.toLocaleString()} 字）`
       );
       await refresh();
     } catch (e) {
       setError(String(e));
     } finally {
       setFqAction(null);
+      setFqProgress(null);
     }
   };
 
@@ -587,32 +587,30 @@ export function StylesView({
               title="点击查看完整风格卡"
               className="flex cursor-pointer flex-col rounded-2xl bg-surface p-4 shadow-card transition-shadow hover:shadow-lift"
             >
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[14px] font-bold text-ink">{s.name}</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 truncate text-[14px] font-bold text-ink">{s.name}</span>
                 {s.source === "内置" && (
-                  <span className="rounded-full bg-track px-2 py-0.5 text-[10px] text-muted">
+                  <span className="shrink-0 rounded-full bg-track px-2 py-0.5 text-[10px] text-muted">
                     内置
                   </span>
                 )}
-                {s.sample_chars > 0 && (
-                  <span className="text-[11px] text-faint">
-                    样本 {s.sample_chars.toLocaleString()} 字
-                  </span>
-                )}
                 <div
-                  className="ml-auto flex items-center gap-2"
+                  className="ml-auto flex shrink-0 items-center gap-1.5"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {tab === "text" &&
                     currentProjectId != null &&
                     (currentProjectStyleId === s.id ? (
-                      <span className="rounded-full bg-pgreen px-2.5 py-1 text-[11px] text-pgreen-t">
-                        当前作品使用中
+                      <span
+                        title="当前作品正在使用这张风格卡"
+                        className="whitespace-nowrap rounded-full bg-pgreen px-2.5 py-1 text-[11px] text-pgreen-t"
+                      >
+                        使用中
                       </span>
                     ) : (
                       <button
                         onClick={() => void applyToCurrent(s.id)}
-                        className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                        className="whitespace-nowrap rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
                       >
                         应用
                       </button>
@@ -620,7 +618,7 @@ export function StylesView({
                   <button
                     title="在对话中调整优化这张卡"
                     onClick={() => openEdit(s)}
-                    className="rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
+                    className="whitespace-nowrap rounded-full bg-card/70 px-3 py-1.5 text-xs text-body shadow-card transition-colors hover:bg-surface"
                   >
                     对话优化
                   </button>
@@ -639,6 +637,11 @@ export function StylesView({
               {s.example && (
                 <p className="mt-1.5 line-clamp-1 rounded-lg bg-canvas px-2.5 py-1.5 text-[11px] leading-4 text-faint">
                   示例：{s.example}
+                </p>
+              )}
+              {s.sample_chars > 0 && (
+                <p className="mt-1 text-[10px] text-faint">
+                  样本 {s.sample_chars.toLocaleString()} 字
                 </p>
               )}
             </div>
@@ -992,8 +995,8 @@ export function StylesView({
               </button>
             </div>
             <p className="mt-2 shrink-0 text-[11px] leading-4 text-faint">
-              内容来自番茄小说公开接口，仅供个人学习与风格分析，请勿传播或商用；蒸馏默认抓前 1.5
-              万字样本，可自选——样本越大，头/中/尾三段取样越全面
+              内容来自番茄小说公开接口，仅供个人学习与风格分析，请勿传播或商用；蒸馏默认抓前
+              1.5 万字样本，可自选字数或全本——样本越大，头/中/尾三段取样越全面
             </p>
 
             {(fqAction || fqProgress) && (
@@ -1043,15 +1046,28 @@ export function StylesView({
                       )}
                       <div className="mt-2 flex gap-2">
                         {fqPickId === b.book_id ? (
-                          /* 蒸馏确认条：自选样本字数 */
+                          /* 蒸馏确认条：全本 或 自选样本字数 */
                           <div className="flex flex-1 flex-wrap items-center gap-1.5">
-                            <span className="text-[11px] text-muted">样本字数</span>
+                            <span className="text-[11px] text-muted">样本范围</span>
+                            <button
+                              onClick={() => setFqWhole(true)}
+                              className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${
+                                fqWhole
+                                  ? "bg-accent text-surface shadow-glow"
+                                  : "bg-card/70 text-body shadow-card hover:bg-surface"
+                              }`}
+                            >
+                              全本
+                            </button>
                             {[5000, 15000, 30000, 50000].map((n) => (
                               <button
                                 key={n}
-                                onClick={() => setFqChars(n)}
+                                onClick={() => {
+                                  setFqWhole(false);
+                                  setFqChars(n);
+                                }}
                                 className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${
-                                  fqChars === n
+                                  !fqWhole && fqChars === n
                                     ? "bg-accent text-surface shadow-glow"
                                     : "bg-card/70 text-body shadow-card hover:bg-surface"
                                 }`}
@@ -1059,22 +1075,27 @@ export function StylesView({
                                 {n / 10000 >= 1 ? `${n / 10000} 万` : `${n / 1000} 千`}
                               </button>
                             ))}
-                            <input
-                              className="w-20 rounded-full bg-surface px-2.5 py-1 text-[11px] text-ink outline-none placeholder:text-faint focus:bg-surface2"
-                              inputMode="numeric"
-                              placeholder="自定义"
-                              value={fqChars > 0 ? fqChars : ""}
-                              onChange={(e) => {
-                                const n = parseInt(e.target.value, 10);
-                                setFqChars(Number.isFinite(n) ? n : 0);
-                              }}
-                            />
+                            {!fqWhole && (
+                              <input
+                                className="w-20 rounded-full bg-surface px-2.5 py-1 text-[11px] text-ink outline-none placeholder:text-faint focus:bg-surface2"
+                                inputMode="numeric"
+                                placeholder="自定义"
+                                value={fqChars > 0 ? fqChars : ""}
+                                onChange={(e) => {
+                                  const n = parseInt(e.target.value, 10);
+                                  setFqChars(Number.isFinite(n) ? n : 0);
+                                }}
+                              />
+                            )}
                             <button
-                              disabled={fqChars < 2000 || fqChars > 300000 || fqAction != null}
-                              onClick={() => void fqDistill(b, fqChars)}
+                              disabled={
+                                fqAction != null ||
+                                (!fqWhole && (fqChars < 2000 || fqChars > 300000))
+                              }
+                              onClick={() => void fqDistill(b, fqWhole ? null : fqChars)}
                               className="rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
                             >
-                              开始蒸馏
+                              {fqWhole ? "全本蒸馏" : "开始蒸馏"}
                             </button>
                             <button
                               onClick={() => setFqPickId(null)}
@@ -1082,6 +1103,11 @@ export function StylesView({
                             >
                               取消
                             </button>
+                            {fqWhole && (
+                              <span className="w-full text-[11px] text-faint">
+                                整本抓取较慢（每 30 章一批限速），完成后按头/中/尾三段取样全书
+                              </span>
+                            )}
                           </div>
                         ) : (
                           <>
@@ -1090,6 +1116,7 @@ export function StylesView({
                               onClick={() => {
                                 setFqPickId(b.book_id);
                                 setFqChars(15000);
+                                setFqWhole(false);
                               }}
                               className="rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-surface shadow-glow transition-colors hover:bg-accent-h disabled:opacity-40"
                             >

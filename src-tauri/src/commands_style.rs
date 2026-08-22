@@ -14,7 +14,7 @@ use tauri::State;
 const DISTILL_INPUT_CHARS: usize = 12000;
 
 /// 蒸馏核心：头/中/尾三段取样 → LLM 出风格卡 → 入库
-async fn distill_and_save(
+pub(crate) async fn distill_and_save(
     db: &Db,
     name: &str,
     source: &str,
